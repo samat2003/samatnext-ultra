@@ -161,6 +161,122 @@ Earlier CPU fallback benchmark before CUDA was fixed:
 - `train_step_tok_s`: `null`
 - `peak_cuda_memory_bytes`: `null`
 
+## Fixed 1000-Layer Audit
+
+Configuration:
+
+- `max_layers`: `1000`
+- `chunk_size`: `1000`
+- `parameter_count`: `216320`
+- `dynamic_halt_used`: `false` in timed benchmark path; benchmark calls use `return_metadata=False`, so ACT halt checks and Python metadata extraction are skipped and all 1000 layers execute.
+- `return_metadata`: `false` in timed benchmark path.
+- `update_every`: `4` for the train benchmark.
+- `has_stored_layer_modules`: `false`
+- `has_separate_lm_head`: `false`
+- `has_trainable_act_head`: `false`
+
+Audit command result:
+
+```text
+parameter_count=216320
+max_layers=1000
+chunk_size=1000
+has_stored_layer_modules=False
+has_separate_lm_head=False
+has_trainable_act_head=False
+```
+
+Correctness:
+
+- `python -m pytest -q` passed: `6 passed`.
+
+Forward-only, batch 1, sequence length 16:
+
+```bash
+python scripts/exp003_gpu_bench.py \
+  --device cuda \
+  --batch-size 1 \
+  --seq-len 16 \
+  --max-layers 1000 \
+  --chunk-size 1000 \
+  --amp bf16 \
+  --forward-only \
+  --warmup-iters 1 \
+  --measure-iters 3
+```
+
+Results:
+
+- `forward_only_tok_s`: `21.841609704568242`
+- `forward_only_layer_token_updates_s`: `21841.60970456824`
+- `layers_used`: `1000.0`
+- `peak_cuda_memory_bytes`: `13129216`
+- `reached_100m_tok_s`: `false`
+
+Forward-only, batch 4, sequence length 32:
+
+```bash
+python scripts/exp003_gpu_bench.py \
+  --device cuda \
+  --batch-size 4 \
+  --seq-len 32 \
+  --max-layers 1000 \
+  --chunk-size 1000 \
+  --amp bf16 \
+  --forward-only \
+  --warmup-iters 1 \
+  --measure-iters 3
+```
+
+Results:
+
+- `forward_only_tok_s`: `78.84270238326654`
+- `forward_only_layer_token_updates_s`: `78842.70238326654`
+- `layers_used`: `1000.0`
+- `peak_cuda_memory_bytes`: `13319168`
+- `reached_100m_tok_s`: `false`
+
+Mono-forward update cadence train benchmark, batch 4, sequence length 32:
+
+```bash
+python scripts/exp003_gpu_bench.py \
+  --device cuda \
+  --batch-size 4 \
+  --seq-len 32 \
+  --max-layers 1000 \
+  --chunk-size 1000 \
+  --amp bf16 \
+  --optimizer fused-adamw \
+  --update-every 4 \
+  --warmup-iters 1 \
+  --measure-iters 3
+```
+
+Results:
+
+- `forward_only_tok_s`: `48.25471510738679`
+- `forward_only_layer_token_updates_s`: `48254.715107386786`
+- `forward_loss_tok_s`: `55.852401770317044`
+- `forward_loss_layer_token_updates_s`: `55852.40177031705`
+- `train_step_tok_s`: `27.558327488810484`
+- `train_layer_token_updates_s`: `27558.327488810486`
+- `optimizer_updates`: `1`
+- `update_every`: `4`
+- `optimizer_used`: `fused-adamw`
+- `optimizer_fallback`: `null`
+- `layers_used`: `1000.0`
+- `peak_cuda_memory_bytes`: `428707328`
+- `reached_100m_tok_s`: `false`
+
+Interpretation:
+
+- Did `100M` input tok/s happen? No.
+- Did `100M` layer-token-updates/sec happen? No.
+- Is this a true 1000-layer result? Yes. `layers_used=1000.0`, `max_layers=1000`, `chunk_size=1000`, and timed benchmark calls disable dynamic halt metadata so all 1000 generated SSM layers execute.
+- The earlier `107M tok/s` result was a shallow `max_layers=1` compiled forward-only result and must not be counted as success for the 1000-layer target.
+- The true 1000-layer eager CUDA path is extremely slow because each generated layer and token step is executed through Python/PyTorch loop overhead.
+- Correction needed next: plan Experiment 003B around a fixed-depth Triton or CUDA fused diagonal SSM chunk kernel for the 1000-layer target before adding a transformer baseline.
+
 ## Interpretation
 
 - CUDA is now working in the virtualenv.
