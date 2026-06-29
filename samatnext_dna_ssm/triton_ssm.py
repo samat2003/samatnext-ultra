@@ -87,6 +87,90 @@ def stateful_ssm_token_reference(
     return out_x, out_h
 
 
+def stateless_x_only_reference(
+    x: Tensor,
+    a_sig: Tensor,
+    b: Tensor,
+    c: Tensor,
+    g_silu: Tensor,
+    *,
+    residual_scale: float = 0.01,
+) -> Tensor:
+    if x.ndim != 1:
+        raise ValueError("x must have shape [d_model]")
+    if a_sig.shape != b.shape or b.shape != c.shape or c.shape != g_silu.shape:
+        raise ValueError("A/B/C/G tensors must have matching shape [layers, d_model]")
+    if x.shape[0] != a_sig.shape[1]:
+        raise ValueError("x d_model must match A/B/C/G d_model")
+
+    out = x.clone()
+    for layer in range(a_sig.shape[0]):
+        update = g_silu[layer].to(out.dtype) * c[layer].to(out.dtype) * (
+            a_sig[layer].to(out.dtype) + b[layer].to(out.dtype)
+        )
+        out = out + residual_scale * update * out
+    return out
+
+
+def shared_state_d_reference(
+    x: Tensor,
+    h: Tensor,
+    a_sig: Tensor,
+    b: Tensor,
+    c: Tensor,
+    g_silu: Tensor,
+    *,
+    residual_scale: float = 0.01,
+) -> tuple[Tensor, Tensor]:
+    if x.ndim != 1 or h.ndim != 1:
+        raise ValueError("x and h must have shape [d_model]")
+    if x.shape != h.shape:
+        raise ValueError("x and h must have matching shape")
+    if a_sig.shape != b.shape or b.shape != c.shape or c.shape != g_silu.shape:
+        raise ValueError("A/B/C/G tensors must have matching shape [layers, d_model]")
+    if x.shape[0] != a_sig.shape[1]:
+        raise ValueError("x d_model must match A/B/C/G d_model")
+
+    out = x.clone()
+    state = h.clone()
+    for layer in range(a_sig.shape[0]):
+        state = a_sig[layer].to(out.dtype) * state + b[layer].to(out.dtype) * out
+        out = out + residual_scale * g_silu[layer].to(out.dtype) * c[layer].to(out.dtype) * state
+    return out, state
+
+
+def compressed_state_reference(
+    x: Tensor,
+    state: Tensor,
+    a_sig: Tensor,
+    b: Tensor,
+    c: Tensor,
+    g_silu: Tensor,
+    *,
+    residual_scale: float = 0.01,
+) -> tuple[Tensor, Tensor]:
+    if x.ndim != 1:
+        raise ValueError("x must have shape [d_model]")
+    if state.ndim != 2:
+        raise ValueError("state must have shape [rank, d_model]")
+    if state.shape[1] != x.shape[0]:
+        raise ValueError("state d_model must match x d_model")
+    if a_sig.shape != b.shape or b.shape != c.shape or c.shape != g_silu.shape:
+        raise ValueError("A/B/C/G tensors must have matching shape [layers, d_model]")
+    if x.shape[0] != a_sig.shape[1]:
+        raise ValueError("x d_model must match A/B/C/G d_model")
+
+    out = x.clone()
+    next_state = state.clone()
+    rank = state.shape[0]
+    for layer in range(a_sig.shape[0]):
+        slot = layer % rank
+        h_l = a_sig[layer].to(out.dtype) * next_state[slot] + b[layer].to(out.dtype) * out
+        next_state[slot] = h_l
+        out = out + residual_scale * g_silu[layer].to(out.dtype) * c[layer].to(out.dtype) * h_l
+    return out, next_state
+
+
 def compare_tensors(actual: Tensor, expected: Tensor) -> SsmCompareResult:
     diff = (actual.float() - expected.float()).abs()
     return SsmCompareResult(
@@ -192,6 +276,179 @@ if TRITON_AVAILABLE:
             tl.store(h_ptr + h_offsets, h_l)
 
         tl.store(out_ptr + d_offsets, x_t)
+
+    @triton.jit
+    def _empty_kernel(out_ptr):
+        tl.store(out_ptr, tl.load(out_ptr))
+
+    @triton.jit
+    def _vector_only_kernel(x_ptr, out_ptr, d_model: tl.constexpr, BLOCK_D: tl.constexpr):
+        d_block = tl.program_id(0)
+        d_offsets = d_block * BLOCK_D + tl.arange(0, BLOCK_D)
+        mask = d_offsets < d_model
+        x_t = tl.load(x_ptr + d_offsets, mask=mask, other=0.0)
+        tl.store(out_ptr + d_offsets, x_t, mask=mask)
+
+    @triton.jit
+    def _stateless_x_only_kernel(
+        x_ptr,
+        a_ptr,
+        b_ptr,
+        c_ptr,
+        g_ptr,
+        out_ptr,
+        layers: tl.constexpr,
+        d_model: tl.constexpr,
+        stride_v_l: tl.constexpr,
+        stride_v_d: tl.constexpr,
+        residual_scale: tl.constexpr,
+        BLOCK_D: tl.constexpr,
+    ):
+        d_block = tl.program_id(0)
+        d_offsets = d_block * BLOCK_D + tl.arange(0, BLOCK_D)
+        mask = d_offsets < d_model
+        x_t = tl.load(x_ptr + d_offsets, mask=mask, other=0.0).to(tl.float32)
+        for layer in tl.range(0, layers):
+            offsets = layer * stride_v_l + d_offsets * stride_v_d
+            a_l = tl.load(a_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+            b_l = tl.load(b_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+            c_l = tl.load(c_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+            g_l = tl.load(g_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+            x_t = x_t + residual_scale * g_l * c_l * (a_l + b_l) * x_t
+        tl.store(out_ptr + d_offsets, x_t, mask=mask)
+
+    @triton.jit
+    def _stateless_x_only_packed_kernel(
+        x_ptr,
+        packed_ptr,
+        out_ptr,
+        layers: tl.constexpr,
+        d_model: tl.constexpr,
+        stride_p_l: tl.constexpr,
+        stride_p_d: tl.constexpr,
+        stride_p_p: tl.constexpr,
+        residual_scale: tl.constexpr,
+        BLOCK_D: tl.constexpr,
+    ):
+        d_block = tl.program_id(0)
+        d_offsets = d_block * BLOCK_D + tl.arange(0, BLOCK_D)
+        mask = d_offsets < d_model
+        x_t = tl.load(x_ptr + d_offsets, mask=mask, other=0.0).to(tl.float32)
+        for layer in tl.range(0, layers):
+            base = layer * stride_p_l + d_offsets * stride_p_d
+            a_l = tl.load(packed_ptr + base + 0 * stride_p_p, mask=mask, other=0.0).to(tl.float32)
+            b_l = tl.load(packed_ptr + base + 1 * stride_p_p, mask=mask, other=0.0).to(tl.float32)
+            c_l = tl.load(packed_ptr + base + 2 * stride_p_p, mask=mask, other=0.0).to(tl.float32)
+            g_l = tl.load(packed_ptr + base + 3 * stride_p_p, mask=mask, other=0.0).to(tl.float32)
+            x_t = x_t + residual_scale * g_l * c_l * (a_l + b_l) * x_t
+        tl.store(out_ptr + d_offsets, x_t, mask=mask)
+
+    @triton.jit
+    def _stateless_x_only_coeff_kernel(
+        x_ptr,
+        coeff_ptr,
+        out_ptr,
+        layers: tl.constexpr,
+        d_model: tl.constexpr,
+        stride_v_l: tl.constexpr,
+        stride_v_d: tl.constexpr,
+        residual_scale: tl.constexpr,
+        BLOCK_D: tl.constexpr,
+    ):
+        d_block = tl.program_id(0)
+        d_offsets = d_block * BLOCK_D + tl.arange(0, BLOCK_D)
+        mask = d_offsets < d_model
+        x_t = tl.load(x_ptr + d_offsets, mask=mask, other=0.0).to(tl.float32)
+        for layer in tl.range(0, layers):
+            coeff = tl.load(
+                coeff_ptr + layer * stride_v_l + d_offsets * stride_v_d,
+                mask=mask,
+                other=0.0,
+            ).to(tl.float32)
+            x_t = x_t + residual_scale * coeff * x_t
+        tl.store(out_ptr + d_offsets, x_t, mask=mask)
+
+    @triton.jit
+    def _shared_state_d_kernel(
+        x_ptr,
+        h_ptr,
+        a_ptr,
+        b_ptr,
+        c_ptr,
+        g_ptr,
+        out_ptr,
+        layers: tl.constexpr,
+        d_model: tl.constexpr,
+        stride_v_l: tl.constexpr,
+        stride_v_d: tl.constexpr,
+        residual_scale: tl.constexpr,
+        BLOCK_D: tl.constexpr,
+    ):
+        d_block = tl.program_id(0)
+        d_offsets = d_block * BLOCK_D + tl.arange(0, BLOCK_D)
+        mask = d_offsets < d_model
+        x_t = tl.load(x_ptr + d_offsets, mask=mask, other=0.0).to(tl.float32)
+        h_t = tl.load(h_ptr + d_offsets, mask=mask, other=0.0).to(tl.float32)
+        for layer in tl.range(0, layers):
+            offsets = layer * stride_v_l + d_offsets * stride_v_d
+            a_l = tl.load(a_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+            b_l = tl.load(b_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+            c_l = tl.load(c_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+            g_l = tl.load(g_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+            h_t = a_l * h_t + b_l * x_t
+            x_t = x_t + residual_scale * g_l * c_l * h_t
+        tl.store(h_ptr + d_offsets, h_t, mask=mask)
+        tl.store(out_ptr + d_offsets, x_t, mask=mask)
+
+    @triton.jit
+    def _compressed_state_kernel(
+        x_ptr,
+        state_ptr,
+        a_ptr,
+        b_ptr,
+        c_ptr,
+        g_ptr,
+        out_ptr,
+        layers: tl.constexpr,
+        d_model: tl.constexpr,
+        state_rank: tl.constexpr,
+        stride_s_r: tl.constexpr,
+        stride_s_d: tl.constexpr,
+        stride_v_l: tl.constexpr,
+        stride_v_d: tl.constexpr,
+        residual_scale: tl.constexpr,
+        BLOCK_D: tl.constexpr,
+        BLOCK_R: tl.constexpr,
+    ):
+        d_block = tl.program_id(0)
+        d_offsets = d_block * BLOCK_D + tl.arange(0, BLOCK_D)
+        r_offsets = tl.arange(0, BLOCK_R)
+        d_mask = d_offsets < d_model
+        r_mask = r_offsets < state_rank
+        x_t = tl.load(x_ptr + d_offsets, mask=d_mask, other=0.0).to(tl.float32)
+        h_vals = tl.load(
+            state_ptr + r_offsets[:, None] * stride_s_r + d_offsets[None, :] * stride_s_d,
+            mask=r_mask[:, None] & d_mask[None, :],
+            other=0.0,
+        ).to(tl.float32)
+        for layer in tl.range(0, layers):
+            slot = layer % state_rank
+            offsets = layer * stride_v_l + d_offsets * stride_v_d
+            a_l = tl.load(a_ptr + offsets, mask=d_mask, other=0.0).to(tl.float32)
+            b_l = tl.load(b_ptr + offsets, mask=d_mask, other=0.0).to(tl.float32)
+            c_l = tl.load(c_ptr + offsets, mask=d_mask, other=0.0).to(tl.float32)
+            g_l = tl.load(g_ptr + offsets, mask=d_mask, other=0.0).to(tl.float32)
+            slot_mask = r_offsets == slot
+            h_t = tl.sum(tl.where(slot_mask[:, None], h_vals, 0.0), axis=0)
+            h_t = a_l * h_t + b_l * x_t
+            h_vals = tl.where(slot_mask[:, None], h_t[None, :], h_vals)
+            x_t = x_t + residual_scale * g_l * c_l * h_t
+        tl.store(
+            state_ptr + r_offsets[:, None] * stride_s_r + d_offsets[None, :] * stride_s_d,
+            h_vals,
+            mask=r_mask[:, None] & d_mask[None, :],
+        )
+        tl.store(out_ptr + d_offsets, x_t, mask=d_mask)
 
 
 def fixed_ssm_triton(
@@ -316,6 +573,225 @@ def stateful_ssm_token_triton_(
     )
     if h_contig.data_ptr() != h.data_ptr():
         h.copy_(h_contig)
+    if out_contig.data_ptr() != out.data_ptr():
+        out.copy_(out_contig)
+    return out
+
+
+def empty_triton_(out: Tensor) -> Tensor:
+    if not TRITON_AVAILABLE:
+        raise RuntimeError("Triton is not available")
+    if not out.is_cuda:
+        raise ValueError("empty_triton_ requires a CUDA tensor")
+    _empty_kernel[(1,)](out)
+    return out
+
+
+def vector_only_triton_(x: Tensor, out: Tensor, *, block_d: int = 256) -> Tensor:
+    if not TRITON_AVAILABLE:
+        raise RuntimeError("Triton is not available")
+    if not x.is_cuda or not out.is_cuda:
+        raise ValueError("vector_only_triton_ requires CUDA tensors")
+    if x.ndim != 1 or out.shape != x.shape:
+        raise ValueError("x and out must have shape [d_model]")
+    d_model = x.shape[0]
+    x_contig = x.contiguous()
+    out_contig = out.contiguous()
+    _vector_only_kernel[(triton.cdiv(d_model, block_d),)](x_contig, out_contig, d_model, block_d)
+    if out_contig.data_ptr() != out.data_ptr():
+        out.copy_(out_contig)
+    return out
+
+
+def stateless_x_only_triton_(
+    x: Tensor,
+    a_sig: Tensor,
+    b: Tensor,
+    c: Tensor,
+    g_silu: Tensor,
+    out: Tensor,
+    *,
+    residual_scale: float = 0.01,
+    block_d: int = 256,
+    packed: Optional[Tensor] = None,
+    coeff: Optional[Tensor] = None,
+) -> Tensor:
+    if not TRITON_AVAILABLE:
+        raise RuntimeError("Triton is not available")
+    if not x.is_cuda or not out.is_cuda:
+        raise ValueError("stateless_x_only_triton_ requires CUDA tensors")
+    if x.ndim != 1 or out.shape != x.shape:
+        raise ValueError("x and out must have shape [d_model]")
+    if a_sig.shape != b.shape or b.shape != c.shape or c.shape != g_silu.shape:
+        raise ValueError("A/B/C/G tensors must have matching shape [layers, d_model]")
+    layers, d_model = a_sig.shape
+    if x.shape[0] != d_model:
+        raise ValueError("x d_model must match A/B/C/G d_model")
+    if block_d <= 0:
+        raise ValueError("block_d must be positive")
+
+    x_contig = x.contiguous()
+    out_contig = out.contiguous()
+    grid = (triton.cdiv(d_model, block_d),)
+    if coeff is not None:
+        coeff_contig = coeff.contiguous()
+        _stateless_x_only_coeff_kernel[grid](
+            x_contig,
+            coeff_contig,
+            out_contig,
+            layers,
+            d_model,
+            coeff_contig.stride(0),
+            coeff_contig.stride(1),
+            residual_scale,
+            block_d,
+        )
+    elif packed is not None:
+        packed_contig = packed.contiguous()
+        _stateless_x_only_packed_kernel[grid](
+            x_contig,
+            packed_contig,
+            out_contig,
+            layers,
+            d_model,
+            packed_contig.stride(0),
+            packed_contig.stride(1),
+            packed_contig.stride(2),
+            residual_scale,
+            block_d,
+        )
+    else:
+        a_contig = a_sig.contiguous()
+        b_contig = b.contiguous()
+        c_contig = c.contiguous()
+        g_contig = g_silu.contiguous()
+        _stateless_x_only_kernel[grid](
+            x_contig,
+            a_contig,
+            b_contig,
+            c_contig,
+            g_contig,
+            out_contig,
+            layers,
+            d_model,
+            a_contig.stride(0),
+            a_contig.stride(1),
+            residual_scale,
+            block_d,
+        )
+    if out_contig.data_ptr() != out.data_ptr():
+        out.copy_(out_contig)
+    return out
+
+
+def shared_state_d_triton_(
+    x: Tensor,
+    h: Tensor,
+    a_sig: Tensor,
+    b: Tensor,
+    c: Tensor,
+    g_silu: Tensor,
+    out: Tensor,
+    *,
+    residual_scale: float = 0.01,
+    block_d: int = 256,
+) -> Tensor:
+    if not TRITON_AVAILABLE:
+        raise RuntimeError("Triton is not available")
+    if x.ndim != 1 or h.ndim != 1 or out.shape != x.shape:
+        raise ValueError("x, h, and out must have shape [d_model]")
+    if not x.is_cuda or not h.is_cuda or not out.is_cuda:
+        raise ValueError("shared_state_d_triton_ requires CUDA tensors")
+    if a_sig.shape != b.shape or b.shape != c.shape or c.shape != g_silu.shape:
+        raise ValueError("A/B/C/G tensors must have matching shape [layers, d_model]")
+    layers, d_model = a_sig.shape
+    if x.shape[0] != d_model or h.shape[0] != d_model:
+        raise ValueError("x/h d_model must match A/B/C/G d_model")
+
+    x_contig = x.contiguous()
+    h_contig = h if h.is_contiguous() else h.contiguous()
+    out_contig = out.contiguous()
+    a_contig = a_sig.contiguous()
+    b_contig = b.contiguous()
+    c_contig = c.contiguous()
+    g_contig = g_silu.contiguous()
+    _shared_state_d_kernel[(triton.cdiv(d_model, block_d),)](
+        x_contig,
+        h_contig,
+        a_contig,
+        b_contig,
+        c_contig,
+        g_contig,
+        out_contig,
+        layers,
+        d_model,
+        a_contig.stride(0),
+        a_contig.stride(1),
+        residual_scale,
+        block_d,
+    )
+    if h_contig.data_ptr() != h.data_ptr():
+        h.copy_(h_contig)
+    if out_contig.data_ptr() != out.data_ptr():
+        out.copy_(out_contig)
+    return out
+
+
+def compressed_state_triton_(
+    x: Tensor,
+    state: Tensor,
+    a_sig: Tensor,
+    b: Tensor,
+    c: Tensor,
+    g_silu: Tensor,
+    out: Tensor,
+    *,
+    residual_scale: float = 0.01,
+    block_d: int = 32,
+) -> Tensor:
+    if not TRITON_AVAILABLE:
+        raise RuntimeError("Triton is not available")
+    if x.ndim != 1 or state.ndim != 2 or out.shape != x.shape:
+        raise ValueError("x/out must have shape [d_model] and state must have shape [rank, d_model]")
+    if not x.is_cuda or not state.is_cuda or not out.is_cuda:
+        raise ValueError("compressed_state_triton_ requires CUDA tensors")
+    if a_sig.shape != b.shape or b.shape != c.shape or c.shape != g_silu.shape:
+        raise ValueError("A/B/C/G tensors must have matching shape [layers, d_model]")
+    layers, d_model = a_sig.shape
+    state_rank = state.shape[0]
+    if x.shape[0] != d_model or state.shape[1] != d_model:
+        raise ValueError("x/state d_model must match A/B/C/G d_model")
+    if state_rank <= 0:
+        raise ValueError("state rank must be positive")
+
+    x_contig = x.contiguous()
+    state_contig = state if state.is_contiguous() else state.contiguous()
+    out_contig = out.contiguous()
+    a_contig = a_sig.contiguous()
+    b_contig = b.contiguous()
+    c_contig = c.contiguous()
+    g_contig = g_silu.contiguous()
+    _compressed_state_kernel[(triton.cdiv(d_model, block_d),)](
+        x_contig,
+        state_contig,
+        a_contig,
+        b_contig,
+        c_contig,
+        g_contig,
+        out_contig,
+        layers,
+        d_model,
+        state_rank,
+        state_contig.stride(0),
+        state_contig.stride(1),
+        a_contig.stride(0),
+        a_contig.stride(1),
+        residual_scale,
+        block_d,
+        state_rank,
+    )
+    if state_contig.data_ptr() != state.data_ptr():
+        state.copy_(state_contig)
     if out_contig.data_ptr() != out.data_ptr():
         out.copy_(out_contig)
     return out
