@@ -396,6 +396,114 @@ if TRITON_AVAILABLE:
         tl.store(out_ptr + d_offsets, x_t * m_t, mask=mask)
 
     @triton.jit
+    def _rms_project_kernel(
+        x_ptr,
+        weight_ptr,
+        logits_ptr,
+        d_model: tl.constexpr,
+        vocab_size: tl.constexpr,
+        stride_w_v: tl.constexpr,
+        stride_w_d: tl.constexpr,
+        eps: tl.constexpr,
+        BLOCK_V: tl.constexpr,
+        BLOCK_D: tl.constexpr,
+    ):
+        v_block = tl.program_id(0)
+        v_offsets = v_block * BLOCK_V + tl.arange(0, BLOCK_V)
+        d_offsets = tl.arange(0, BLOCK_D)
+        d_mask = d_offsets < d_model
+        v_mask = v_offsets < vocab_size
+        x = tl.load(x_ptr + d_offsets, mask=d_mask, other=0.0).to(tl.float32)
+        rms = tl.sqrt(tl.sum(x * x, axis=0) / d_model + eps)
+        x = x / rms
+        w = tl.load(
+            weight_ptr + v_offsets[:, None] * stride_w_v + d_offsets[None, :] * stride_w_d,
+            mask=v_mask[:, None] & d_mask[None, :],
+            other=0.0,
+        ).to(tl.float32)
+        logits = tl.sum(w * x[None, :], axis=1)
+        tl.store(logits_ptr + v_offsets, logits, mask=v_mask)
+
+    @triton.jit
+    def _fused_precomposed_logits_kernel(
+        token_ptr,
+        weight_ptr,
+        master_ptr,
+        logits_ptr,
+        d_model: tl.constexpr,
+        vocab_size: tl.constexpr,
+        stride_w_v: tl.constexpr,
+        stride_w_d: tl.constexpr,
+        eps: tl.constexpr,
+        BLOCK_V: tl.constexpr,
+        BLOCK_D: tl.constexpr,
+    ):
+        token = tl.load(token_ptr)
+        v_block = tl.program_id(0)
+        v_offsets = v_block * BLOCK_V + tl.arange(0, BLOCK_V)
+        d_offsets = tl.arange(0, BLOCK_D)
+        d_mask = d_offsets < d_model
+        v_mask = v_offsets < vocab_size
+        emb = tl.load(
+            weight_ptr + token * stride_w_v + d_offsets * stride_w_d,
+            mask=d_mask,
+            other=0.0,
+        ).to(tl.float32)
+        master = tl.load(master_ptr + d_offsets, mask=d_mask, other=1.0).to(tl.float32)
+        x = emb * master
+        rms = tl.sqrt(tl.sum(x * x, axis=0) / d_model + eps)
+        x = x / rms
+        w = tl.load(
+            weight_ptr + v_offsets[:, None] * stride_w_v + d_offsets[None, :] * stride_w_d,
+            mask=v_mask[:, None] & d_mask[None, :],
+            other=0.0,
+        ).to(tl.float32)
+        logits = tl.sum(w * x[None, :], axis=1)
+        tl.store(logits_ptr + v_offsets, logits, mask=v_mask)
+
+    @triton.jit
+    def _fused_precomposed_top1_kernel(
+        token_ptr,
+        weight_ptr,
+        master_ptr,
+        top1_ptr,
+        score_ptr,
+        d_model: tl.constexpr,
+        vocab_size: tl.constexpr,
+        stride_w_v: tl.constexpr,
+        stride_w_d: tl.constexpr,
+        eps: tl.constexpr,
+        BLOCK_V: tl.constexpr,
+        BLOCK_D: tl.constexpr,
+    ):
+        token = tl.load(token_ptr)
+        v_offsets = tl.arange(0, BLOCK_V)
+        d_offsets = tl.arange(0, BLOCK_D)
+        d_mask = d_offsets < d_model
+        v_mask = v_offsets < vocab_size
+        emb = tl.load(
+            weight_ptr + token * stride_w_v + d_offsets * stride_w_d,
+            mask=d_mask,
+            other=0.0,
+        ).to(tl.float32)
+        master = tl.load(master_ptr + d_offsets, mask=d_mask, other=1.0).to(tl.float32)
+        x = emb * master
+        rms = tl.sqrt(tl.sum(x * x, axis=0) / d_model + eps)
+        x = x / rms
+        w = tl.load(
+            weight_ptr + v_offsets[:, None] * stride_w_v + d_offsets[None, :] * stride_w_d,
+            mask=v_mask[:, None] & d_mask[None, :],
+            other=0.0,
+        ).to(tl.float32)
+        logits = tl.sum(w * x[None, :], axis=1)
+        logits = tl.where(v_mask, logits, -3.4028234663852886e38)
+        max_score = tl.max(logits, axis=0)
+        idx_candidates = tl.where(logits == max_score, v_offsets, vocab_size)
+        top1 = tl.min(idx_candidates, axis=0)
+        tl.store(top1_ptr, top1)
+        tl.store(score_ptr, max_score)
+
+    @triton.jit
     def _shared_state_d_kernel(
         x_ptr,
         h_ptr,
@@ -738,6 +846,127 @@ def precomposed_stateless_triton_(
     if out_contig.data_ptr() != out.data_ptr():
         out.copy_(out_contig)
     return out
+
+
+def rms_project_triton_(
+    x: Tensor,
+    weight: Tensor,
+    logits: Tensor,
+    *,
+    eps: float = 1e-6,
+    block_v: int = 16,
+    block_d: int = 256,
+) -> Tensor:
+    if not TRITON_AVAILABLE:
+        raise RuntimeError("Triton is not available")
+    if not x.is_cuda or not weight.is_cuda or not logits.is_cuda:
+        raise ValueError("rms_project_triton_ requires CUDA tensors")
+    if x.ndim != 1 or weight.ndim != 2 or logits.ndim != 1:
+        raise ValueError("x/logits must be 1D and weight must be [vocab, d_model]")
+    vocab_size, d_model = weight.shape
+    if x.shape[0] != d_model or logits.shape[0] != vocab_size:
+        raise ValueError("shape mismatch for RMS projection")
+    x_contig = x.contiguous()
+    weight_contig = weight.contiguous()
+    logits_contig = logits.contiguous()
+    _rms_project_kernel[(triton.cdiv(vocab_size, block_v),)](
+        x_contig,
+        weight_contig,
+        logits_contig,
+        d_model,
+        vocab_size,
+        weight_contig.stride(0),
+        weight_contig.stride(1),
+        eps,
+        block_v,
+        block_d,
+    )
+    if logits_contig.data_ptr() != logits.data_ptr():
+        logits.copy_(logits_contig)
+    return logits
+
+
+def fused_precomposed_logits_triton_(
+    token: Tensor,
+    weight: Tensor,
+    master_coeff: Tensor,
+    logits: Tensor,
+    *,
+    eps: float = 1e-6,
+    block_v: int = 16,
+    block_d: int = 256,
+) -> Tensor:
+    if not TRITON_AVAILABLE:
+        raise RuntimeError("Triton is not available")
+    if not token.is_cuda or not weight.is_cuda or not master_coeff.is_cuda or not logits.is_cuda:
+        raise ValueError("fused_precomposed_logits_triton_ requires CUDA tensors")
+    if token.numel() != 1:
+        raise ValueError("token must contain one token id")
+    vocab_size, d_model = weight.shape
+    if master_coeff.shape != (d_model,) or logits.shape != (vocab_size,):
+        raise ValueError("shape mismatch for fused precomposed logits")
+    token_contig = token.contiguous()
+    weight_contig = weight.contiguous()
+    master_contig = master_coeff.contiguous()
+    logits_contig = logits.contiguous()
+    _fused_precomposed_logits_kernel[(triton.cdiv(vocab_size, block_v),)](
+        token_contig,
+        weight_contig,
+        master_contig,
+        logits_contig,
+        d_model,
+        vocab_size,
+        weight_contig.stride(0),
+        weight_contig.stride(1),
+        eps,
+        block_v,
+        block_d,
+    )
+    if logits_contig.data_ptr() != logits.data_ptr():
+        logits.copy_(logits_contig)
+    return logits
+
+
+def fused_precomposed_top1_triton_(
+    token: Tensor,
+    weight: Tensor,
+    master_coeff: Tensor,
+    top1: Tensor,
+    score: Tensor,
+    *,
+    eps: float = 1e-6,
+    block_v: int = 256,
+    block_d: int = 256,
+) -> tuple[Tensor, Tensor]:
+    if not TRITON_AVAILABLE:
+        raise RuntimeError("Triton is not available")
+    if not token.is_cuda or not weight.is_cuda or not master_coeff.is_cuda or not top1.is_cuda or not score.is_cuda:
+        raise ValueError("fused_precomposed_top1_triton_ requires CUDA tensors")
+    if token.numel() != 1 or top1.numel() != 1 or score.numel() != 1:
+        raise ValueError("token, top1, and score must be scalar tensors")
+    vocab_size, d_model = weight.shape
+    if vocab_size > block_v:
+        raise ValueError("top1 fused kernel currently requires vocab_size <= block_v")
+    if master_coeff.shape != (d_model,):
+        raise ValueError("master_coeff shape mismatch")
+    token_contig = token.contiguous()
+    weight_contig = weight.contiguous()
+    master_contig = master_coeff.contiguous()
+    _fused_precomposed_top1_kernel[(1,)](
+        token_contig,
+        weight_contig,
+        master_contig,
+        top1,
+        score,
+        d_model,
+        vocab_size,
+        weight_contig.stride(0),
+        weight_contig.stride(1),
+        eps,
+        block_v,
+        block_d,
+    )
+    return top1, score
 
 
 def shared_state_d_triton_(
