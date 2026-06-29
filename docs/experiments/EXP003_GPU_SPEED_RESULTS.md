@@ -107,6 +107,15 @@ python scripts/exp003_gpu_bench.py --device cuda --batch-size 128 --seq-len 256 
 - `peak_cuda_memory_bytes`: `135618560`
 - `reached_100m_tok_s`: `false`
 
+Compile cleanup rerun after adding `return_metadata=False` benchmark path:
+
+- Scalar metadata graph break at `halt_score = float(halt_score_tensor.detach().cpu())`: removed for timed benchmark calls.
+- Command rerun: `python scripts/exp003_gpu_bench.py --device cuda --batch-size 128 --seq-len 256 --max-layers 8 --chunk-size 4 --amp bf16 --compile reduce-overhead --forward-only`
+- Result: no scalar graph-break warning appeared, but Inductor compilation of the full 8-layer x 256-token Python loop did not finish in a reasonable cleanup window and was interrupted.
+- Peak CUDA memory: no completed measurement for this rerun.
+- Before cleanup compiled tok/s: `4072697.9568395736`.
+- After cleanup compiled tok/s: not measured for this setting because compilation did not complete.
+
 Compile mode: `max-autotune`
 
 ```bash
@@ -122,6 +131,27 @@ python scripts/exp003_gpu_bench.py --device cuda --batch-size 128 --seq-len 256 
 - `peak_cuda_memory_bytes`: `139805184`
 - `reached_100m_tok_s`: `false`
 
+Compile cleanup rerun after adding `return_metadata=False` benchmark path:
+
+- Scalar metadata graph break at `halt_score = float(halt_score_tensor.detach().cpu())`: removed for timed benchmark calls.
+- Command rerun: `python scripts/exp003_gpu_bench.py --device cuda --batch-size 128 --seq-len 256 --max-layers 8 --chunk-size 4 --amp bf16 --compile max-autotune --forward-only`
+- Result: no scalar graph-break warning appeared, but Inductor compilation of the full 8-layer x 256-token Python loop did not finish in a reasonable cleanup window and was interrupted during scheduler/fusion work.
+- Peak CUDA memory: no completed measurement for this rerun.
+- Before cleanup compiled tok/s: `4989071.181368442`.
+- After cleanup compiled tok/s: not measured for this setting because compilation did not complete.
+
+Compile cleanup shallow run:
+
+```bash
+python scripts/exp003_gpu_bench.py --device cuda --batch-size 512 --seq-len 512 --max-layers 1 --chunk-size 1 --amp bf16 --compile reduce-overhead --forward-only
+```
+
+- Scalar metadata graph break: removed.
+- `forward_only_tok_s`: `107371325.94399181`
+- `forward_only_layer_token_updates_s`: `107371325.94399181`
+- `peak_cuda_memory_bytes`: `417282560`
+- `reached_100m_tok_s`: `true`
+
 Earlier CPU fallback benchmark before CUDA was fixed:
 
 - Command: `python scripts/exp003_gpu_bench.py --device cpu --batch-size 8 --seq-len 64 --max-layers 4 --chunk-size 2 --amp off --forward-only`
@@ -135,9 +165,11 @@ Earlier CPU fallback benchmark before CUDA was fixed:
 
 - CUDA is now working in the virtualenv.
 - The best measured GPU forward-only throughput in these runs was `5.83M tok/s` for the shallow `max_layers=1`, large-batch setting.
-- The best measured compiled `max_layers=8` forward-only throughput was `4.99M tok/s`.
+- Before the compile cleanup, the best measured compiled `max_layers=8` forward-only throughput was `4.99M tok/s`, but that result included a scalar metadata graph break.
+- After the compile cleanup, the scalar metadata graph break was removed, but compiling the full Python layer/token loop became too expensive for the requested 8-layer compiled settings and did not complete in the cleanup run.
+- The shallow compiled `max_layers=1` run reached `107.37M tok/s`. This is not a full 8-layer training result and should not be generalized to the main target workload.
 - The measured training throughput with fused AdamW was `41.9k tok/s`.
-- `100M+ tok/s` was not reached.
-- `torch.compile` helped the forward-only path significantly, but graph breaks remain around scalar metadata extraction in `DynamicDnaSsmLM.forward`.
+- `100M+ tok/s` was reached only for the shallow `max_layers=1`, forward-only compiled run. It was not reached for the 8-layer benchmark or training benchmark.
+- `torch.compile` previously helped by graph-breaking around scalar metadata extraction. Once that graph break was removed, Inductor attempted to compile a much larger loop graph and compilation became the bottleneck.
 - FlashAttention was not used because the Dynamic DNA-SSM path has no attention/QKV operation.
-- Recommended next optimization step: remove benchmark-hostile scalar extraction from the timed compiled path without changing model semantics, then prototype a Triton or CUDA fused diagonal causal SSM chunk kernel if Python loop overhead still dominates.
+- Recommended next optimization step: do not rely on full `torch.compile` of the Python token/layer loop for the 8-layer path. Prototype a Triton or CUDA fused diagonal causal SSM chunk kernel, or add a smaller explicit compiled kernel boundary around one chunk.
