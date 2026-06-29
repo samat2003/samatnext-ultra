@@ -112,6 +112,18 @@ def stateless_x_only_reference(
     return out
 
 
+def precompose_stateless_master_coeff(coeff: Tensor, *, residual_scale: float = 0.01) -> Tensor:
+    if coeff.ndim != 2:
+        raise ValueError("coeff must have shape [layers, d_model]")
+    return torch.prod(1.0 + residual_scale * coeff.float(), dim=0).to(coeff.dtype)
+
+
+def precomposed_stateless_reference(x: Tensor, master_coeff: Tensor) -> Tensor:
+    if x.ndim != 1 or master_coeff.shape != x.shape:
+        raise ValueError("x and master_coeff must have shape [d_model]")
+    return x * master_coeff.to(x.dtype)
+
+
 def shared_state_d_reference(
     x: Tensor,
     h: Tensor,
@@ -367,6 +379,21 @@ if TRITON_AVAILABLE:
             ).to(tl.float32)
             x_t = x_t + residual_scale * coeff * x_t
         tl.store(out_ptr + d_offsets, x_t, mask=mask)
+
+    @triton.jit
+    def _precomposed_stateless_kernel(
+        x_ptr,
+        master_ptr,
+        out_ptr,
+        d_model: tl.constexpr,
+        BLOCK_D: tl.constexpr,
+    ):
+        d_block = tl.program_id(0)
+        d_offsets = d_block * BLOCK_D + tl.arange(0, BLOCK_D)
+        mask = d_offsets < d_model
+        x_t = tl.load(x_ptr + d_offsets, mask=mask, other=0.0).to(tl.float32)
+        m_t = tl.load(master_ptr + d_offsets, mask=mask, other=1.0).to(tl.float32)
+        tl.store(out_ptr + d_offsets, x_t * m_t, mask=mask)
 
     @triton.jit
     def _shared_state_d_kernel(
@@ -679,6 +706,35 @@ def stateless_x_only_triton_(
             residual_scale,
             block_d,
         )
+    if out_contig.data_ptr() != out.data_ptr():
+        out.copy_(out_contig)
+    return out
+
+
+def precomposed_stateless_triton_(
+    x: Tensor,
+    master_coeff: Tensor,
+    out: Tensor,
+    *,
+    block_d: int = 256,
+) -> Tensor:
+    if not TRITON_AVAILABLE:
+        raise RuntimeError("Triton is not available")
+    if not x.is_cuda or not master_coeff.is_cuda or not out.is_cuda:
+        raise ValueError("precomposed_stateless_triton_ requires CUDA tensors")
+    if x.ndim != 1 or master_coeff.shape != x.shape or out.shape != x.shape:
+        raise ValueError("x, master_coeff, and out must have shape [d_model]")
+    d_model = x.shape[0]
+    x_contig = x.contiguous()
+    master_contig = master_coeff.contiguous()
+    out_contig = out.contiguous()
+    _precomposed_stateless_kernel[(triton.cdiv(d_model, block_d),)](
+        x_contig,
+        master_contig,
+        out_contig,
+        d_model,
+        block_d,
+    )
     if out_contig.data_ptr() != out.data_ptr():
         out.copy_(out_contig)
     return out
