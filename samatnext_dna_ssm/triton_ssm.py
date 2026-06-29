@@ -56,6 +56,37 @@ def fixed_ssm_reference(
     return out
 
 
+def stateful_ssm_token_reference(
+    x: Tensor,
+    h: Tensor,
+    a_sig: Tensor,
+    b: Tensor,
+    c: Tensor,
+    g_silu: Tensor,
+    *,
+    residual_scale: float = 0.01,
+) -> tuple[Tensor, Tensor]:
+    if x.ndim != 1:
+        raise ValueError("x must have shape [d_model]")
+    if h.ndim != 2:
+        raise ValueError("h must have shape [layers, d_model]")
+    if a_sig.shape != b.shape or b.shape != c.shape or c.shape != g_silu.shape:
+        raise ValueError("A/B/C/G tensors must have matching shape [layers, d_model]")
+    if h.shape != a_sig.shape:
+        raise ValueError("h and A/B/C/G tensors must have matching shape [layers, d_model]")
+    if x.shape[0] != h.shape[1]:
+        raise ValueError("x d_model must match h d_model")
+
+    out_x = x.clone()
+    out_h = h.clone()
+    for layer in range(a_sig.shape[0]):
+        h_l = a_sig[layer].to(out_x.dtype) * out_h[layer].to(out_x.dtype) + b[layer].to(out_x.dtype) * out_x
+        y_l = c[layer].to(out_x.dtype) * h_l
+        out_x = out_x + residual_scale * g_silu[layer].to(out_x.dtype) * y_l
+        out_h[layer] = h_l.to(out_h.dtype)
+    return out_x, out_h
+
+
 def compare_tensors(actual: Tensor, expected: Tensor) -> SsmCompareResult:
     diff = (actual.float() - expected.float()).abs()
     return SsmCompareResult(
@@ -125,6 +156,43 @@ if TRITON_AVAILABLE:
             mask=token_mask[:, None] & d_mask[None, :],
         )
 
+    @triton.jit
+    def _stateful_ssm_token_kernel(
+        x_ptr,
+        h_ptr,
+        a_ptr,
+        b_ptr,
+        c_ptr,
+        g_ptr,
+        out_ptr,
+        layers: tl.constexpr,
+        d_model: tl.constexpr,
+        stride_h_l: tl.constexpr,
+        stride_h_d: tl.constexpr,
+        stride_v_l: tl.constexpr,
+        stride_v_d: tl.constexpr,
+        residual_scale: tl.constexpr,
+        BLOCK_D: tl.constexpr,
+    ):
+        d_block = tl.program_id(0)
+        d_offsets = d_block * BLOCK_D + tl.arange(0, BLOCK_D)
+        x_t = tl.load(x_ptr + d_offsets).to(tl.float32)
+
+        for layer in tl.range(0, layers):
+            h_offsets = layer * stride_h_l + d_offsets * stride_h_d
+            v_offsets = layer * stride_v_l + d_offsets * stride_v_d
+            h_l = tl.load(h_ptr + h_offsets).to(tl.float32)
+            a_l = tl.load(a_ptr + v_offsets).to(tl.float32)
+            b_l = tl.load(b_ptr + v_offsets).to(tl.float32)
+            c_l = tl.load(c_ptr + v_offsets).to(tl.float32)
+            g_l = tl.load(g_ptr + v_offsets).to(tl.float32)
+            h_l = a_l * h_l + b_l * x_t
+            y_t = c_l * h_l
+            x_t = x_t + residual_scale * g_l * y_t
+            tl.store(h_ptr + h_offsets, h_l)
+
+        tl.store(out_ptr + d_offsets, x_t)
+
 
 def fixed_ssm_triton(
     x: Tensor,
@@ -183,4 +251,71 @@ def fixed_ssm_triton(
         block_seq,
         block_d,
     )
+    return out
+
+
+def stateful_ssm_token_triton_(
+    x: Tensor,
+    h: Tensor,
+    a_sig: Tensor,
+    b: Tensor,
+    c: Tensor,
+    g_silu: Tensor,
+    out: Tensor,
+    *,
+    residual_scale: float = 0.01,
+    block_d: int = 256,
+) -> Tensor:
+    if not TRITON_AVAILABLE:
+        raise RuntimeError("Triton is not available")
+    if not x.is_cuda or not h.is_cuda or not out.is_cuda:
+        raise ValueError("Stateful Triton SSM requires CUDA tensors")
+    if x.ndim != 1:
+        raise ValueError("x must have shape [d_model]")
+    if h.ndim != 2:
+        raise ValueError("h must have shape [layers, d_model]")
+    if out.shape != x.shape:
+        raise ValueError("out must have shape [d_model]")
+    if a_sig.shape != b.shape or b.shape != c.shape or c.shape != g_silu.shape:
+        raise ValueError("A/B/C/G tensors must have matching shape [layers, d_model]")
+    if h.shape != a_sig.shape:
+        raise ValueError("h and A/B/C/G tensors must have matching shape [layers, d_model]")
+    if x.shape[0] != h.shape[1]:
+        raise ValueError("x d_model must match h d_model")
+
+    layers, d_model = h.shape
+    if d_model % block_d != 0:
+        raise ValueError("d_model must be divisible by block_d for the stateful exact-shape kernel")
+    if block_d <= 0:
+        raise ValueError("block_d must be positive")
+
+    x_contig = x.contiguous()
+    h_contig = h if h.is_contiguous() else h.contiguous()
+    a_contig = a_sig.contiguous()
+    b_contig = b.contiguous()
+    c_contig = c.contiguous()
+    g_contig = g_silu.contiguous()
+    out_contig = out.contiguous()
+    grid = (triton.cdiv(d_model, block_d),)
+    _stateful_ssm_token_kernel[grid](
+        x_contig,
+        h_contig,
+        a_contig,
+        b_contig,
+        c_contig,
+        g_contig,
+        out_contig,
+        layers,
+        d_model,
+        h_contig.stride(0),
+        h_contig.stride(1),
+        a_contig.stride(0),
+        a_contig.stride(1),
+        residual_scale,
+        block_d,
+    )
+    if h_contig.data_ptr() != h.data_ptr():
+        h.copy_(h_contig)
+    if out_contig.data_ptr() != out.data_ptr():
+        out.copy_(out_contig)
     return out
