@@ -154,7 +154,7 @@ def run_forward_only(
         context = torch.no_grad() if args.no_grad_only or args.forward_only else nullcontext()
         with context:
             with autocast_context(device, args.amp):
-                output = model(inputs)
+                output = model(inputs, return_metadata=False)
         return int(output.layers_used)
 
     reset_peak_memory(device)
@@ -187,7 +187,7 @@ def run_forward_loss(
     def step() -> int:
         with torch.no_grad():
             with autocast_context(device, args.amp):
-                output = model(inputs)
+                output = model(inputs, return_metadata=False)
                 loss_for_logits(output.logits, targets)
         return int(output.layers_used)
 
@@ -222,7 +222,7 @@ def run_train_steps(
         nonlocal step_index, optimizer_updates
         step_index += 1
         with autocast_context(device, args.amp):
-            output = model(inputs)
+            output = model(inputs, return_metadata=False)
             loss = loss_for_logits(output.logits, targets)
         if step_index % args.update_every == 0:
             optimizer.zero_grad(set_to_none=True)

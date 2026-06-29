@@ -111,6 +111,7 @@ class DynamicDnaSsmLM(nn.Module):
         halt_threshold: Optional[float] = None,
         min_chunks: Optional[int] = None,
         max_chunks: Optional[int] = None,
+        return_metadata: bool = True,
     ) -> DynamicDnaSsmOutput:
         cfg = self.config
         if input_ids.ndim != 2:
@@ -155,26 +156,34 @@ class DynamicDnaSsmLM(nn.Module):
             layers_used += chunk_layers
             delta = (x - x_before).abs().mean()
             halt_score_tensor = torch.reciprocal(1.0 + delta)
-            halt_score = float(halt_score_tensor.detach().cpu())
+            if return_metadata:
+                halt_score = float(halt_score_tensor.detach().cpu())
 
             del a_chunk, b_chunk, c_chunk, g_chunk
 
-            if chunks_used >= min_chunks_value and halt_score >= threshold:
-                halted = start_layer + chunk_layers < cfg.max_layers
-                break
+            if return_metadata:
+                if chunks_used >= min_chunks_value and halt_score >= threshold:
+                    halted = start_layer + chunk_layers < cfg.max_layers
+                    break
 
         hidden_rms_tensor = torch.sqrt(torch.mean(x.detach() * x.detach()))
         x = self._output_normalize(x, cfg.output_norm_eps)
         logits = F.linear(x, self.token_embed.weight)
-        logits_rms_tensor = torch.sqrt(torch.mean(logits.detach() * logits.detach()))
+        if return_metadata:
+            logits_rms_tensor = torch.sqrt(torch.mean(logits.detach() * logits.detach()))
+            hidden_rms = float(hidden_rms_tensor.cpu())
+            logits_rms = float(logits_rms_tensor.cpu())
+        else:
+            hidden_rms = 0.0
+            logits_rms = 0.0
         return DynamicDnaSsmOutput(
             logits=logits,
             layers_used=layers_used,
             chunks_used=chunks_used,
             halt_score=halt_score,
             halted=halted,
-            hidden_rms=float(hidden_rms_tensor.cpu()),
-            logits_rms=float(logits_rms_tensor.cpu()),
+            hidden_rms=hidden_rms,
+            logits_rms=logits_rms,
         )
 
     @staticmethod
