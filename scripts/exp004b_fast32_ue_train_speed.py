@@ -518,7 +518,8 @@ def run_ue_train_loop(
         final_loss = lv
 
         # --- Periodic evaluation every eval_every steps ---
-        if args.eval_every is not None and (step_idx + 1) % args.eval_every == 0:
+        eval_every = getattr(args, "eval_every", None)
+        if eval_every is not None and (step_idx + 1) % eval_every == 0:
             current_val_loss = eval_val()
             if current_val_loss is not None:
                 print(f"[Step {step_idx + 1}] Train CE: {lv:.4f}, Val CE: {current_val_loss:.4f}")
