@@ -1,0 +1,55 @@
+{
+  "architecture": "original_stateful_32",
+  "best_val_loss": null,
+  "checkpoint_path": "checkpoints/tiny_shakespeare_fast32/overfit/best.pt",
+  "dataset_name": "karpathy/tiny_shakespeare",
+  "dataset_names_tried": [
+    "tiny_shakespeare",
+    "karpathy/tiny_shakespeare"
+  ],
+  "final_loss": 2.8827364444732666,
+  "first_loss": 5.9524335861206055,
+  "frozen_checksums_unchanged": true,
+  "last_checkpoint_path": "checkpoints/tiny_shakespeare_fast32/overfit/last.pt",
+  "loss_decreased": true,
+  "parameter_count": 216320,
+  "tokens_sec": 1592.7490805553864,
+  "train_curve": [
+    {
+      "loss": 5.9524335861206055,
+      "step": 1,
+      "tokens_sec": 932.0945681840758
+    },
+    {
+      "loss": 3.5337071418762207,
+      "step": 50,
+      "tokens_sec": 1612.971729087755
+    },
+    {
+      "loss": 3.0603456497192383,
+      "step": 100,
+      "tokens_sec": 1606.1039786088606
+    },
+    {
+      "loss": 2.9886832237243652,
+      "step": 150,
+      "tokens_sec": 1634.7766503245837
+    },
+    {
+      "loss": 2.9710988998413086,
+      "step": 200,
+      "tokens_sec": 1685.2374027630256
+    },
+    {
+      "loss": 2.9522364139556885,
+      "step": 250,
+      "tokens_sec": 1685.8400111853482
+    },
+    {
+      "loss": 2.8827364444732666,
+      "step": 300,
+      "tokens_sec": 1592.7492903987932
+    }
+  ],
+  "val_curve": []
+}
