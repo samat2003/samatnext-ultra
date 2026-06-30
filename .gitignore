@@ -26,3 +26,9 @@ data/market_pretrain/**/val.bin
 data/market_pretrain/**/test.bin
 results_market_pretraining/
 results_market_pretraining_long/
+
+# EXP007 Exceptions
+!data/reasoning_finetune/
+!data/reasoning_finetune/**/metadata.json
+!data/reasoning_finetune/**/sample_preview.json
+!data/reasoning_finetune/**/DATASET_CARD.md
