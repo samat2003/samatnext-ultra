@@ -1,0 +1,31 @@
+{
+  "dataset_name": "fast32_reasoning_v1",
+  "dataset_version": "1.0.0",
+  "creation_date": "2026-06-30",
+  "total_examples": 120000,
+  "examples_per_category": {
+    "arithmetic": 25183,
+    "symbolic_reasoning": 24861,
+    "boolean_logic": 25187,
+    "market_bar_reasoning": 24769
+  },
+  "train_token_count": 28290745,
+  "val_token_count": 2812771,
+  "test_token_count": 2824400,
+  "total_token_count": 33927916,
+  "max_sequence_length": 522,
+  "average_sequence_length": 281.90745,
+  "split_counts": {
+    "train": 100000,
+    "validation": 10000,
+    "test": 10000
+  },
+  "random_seed": 42,
+  "vocab_size": 256,
+  "byte_level_encoding": true,
+  "licenses_data_sources": "Binance Public historical USD(S)-M futures monthly klines (2025-06)",
+  "confirmation_no_trading_labels": true,
+  "confirmation_no_profit_labels": true,
+  "confirmation_no_architecture_changes": true,
+  "training_ready": true
+}
