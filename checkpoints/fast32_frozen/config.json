@@ -1,0 +1,14 @@
+{
+  "chunk_size": 32,
+  "d_model": 256,
+  "dna_hidden_dim": 128,
+  "halt_threshold": 1.1,
+  "layer_embed_dim": 16,
+  "max_layers": 32,
+  "min_chunks": 1,
+  "output_norm_eps": 1e-06,
+  "parameter_count": 216320,
+  "residual_scale": 0.01,
+  "seed": 1234,
+  "vocab_size": 256
+}

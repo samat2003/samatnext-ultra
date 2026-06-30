@@ -1,0 +1,56 @@
+{
+  "architecture_caveats": [
+    "precomposed_stateless_32_fused_e2e is the fastest result but is an architectural speed ablation",
+    "original_stateful_32 is the architecture-preserving result",
+    "no training has been done after freezing"
+  ],
+  "benchmarks": {
+    "003g_precomposed_stateless_32_fused_e2e": {
+      "amp": "fp16",
+      "caveat": "architectural speed ablation, not original stateful SSM",
+      "cuda_graph": true,
+      "full_logits_end_to_end": true,
+      "input_tok_s": 130760,
+      "max_us": 18.82,
+      "mean_us": 7.65,
+      "p999_us": 11.87,
+      "p99_us": 8.48,
+      "parameter_count": 216320
+    },
+    "003h_original_stateful_32": {
+      "amp": "fp16",
+      "caveat": "architecture-preserving Fast32 stateful recurrence",
+      "commit": "1c8e488b3453f100e59c6b545f4ec646b3e27eca",
+      "cuda_graph": true,
+      "fallback": false,
+      "full_logits_end_to_end": true,
+      "input_tok_s": 72743,
+      "max_us": 25.86,
+      "mean_us": 13.75,
+      "p999_us": 18.08,
+      "p99_us": 14.62,
+      "parameter_count": 216320,
+      "tests": "95 passed"
+    }
+  },
+  "cuda_available": true,
+  "d_model": 256,
+  "device_name": "NVIDIA GeForce RTX 5070 Ti Laptop GPU",
+  "dtype": "fp16 benchmark, fp32 CPU artifact storage",
+  "frozen_after_commit": "1c8e488b3453f100e59c6b545f4ec646b3e27eca",
+  "git_commit": "1c8e488b3453f100e59c6b545f4ec646b3e27eca",
+  "layers": 32,
+  "license": "Apache-2.0 unless a dependency license says otherwise",
+  "parameter_count": 216320,
+  "platform": "Linux-6.18.33.1-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "python_executable": "/home/samat_zharassov/samatnext-ultra/.venv/bin/python",
+  "python_version": "3.12.3",
+  "torch_cuda_version": "12.8",
+  "torch_version": "2.11.0+cu128",
+  "triton_available": true,
+  "variant_names": [
+    "precomposed_stateless_32_fused_e2e",
+    "original_stateful_32"
+  ],
+  "vocab_size": 256
+}
