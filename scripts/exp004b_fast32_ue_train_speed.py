@@ -638,6 +638,30 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
         else:
             def get_batch():
                 return sample_batch(train_data, args.batch_size, args.seq_len, device, g)
+    elif args.data == "binance":
+        dataset_actual_name = "Binance Futures UM 1m"
+        data_dir = ROOT / "data" / "market_pretrain" / "binance_um_futures_1m"
+        train_path = data_dir / "train.bin"
+        val_path = data_dir / "val.bin"
+        
+        if not train_path.exists() or not val_path.exists():
+            raise FileNotFoundError(f"Prepared Binance pretraining dataset not found in {data_dir}")
+            
+        import numpy as np
+        train_data = torch.from_numpy(np.fromfile(train_path, dtype=np.uint8)).long()
+        val_data = torch.from_numpy(np.fromfile(val_path, dtype=np.uint8)).long()
+        
+        train_token_count = train_data.numel()
+        val_token_count = val_data.numel()
+        
+        g = torch.Generator().manual_seed(args.seed)
+        if args.overfit_one_batch:
+            fixed_x, fixed_y = sample_batch(train_data, args.batch_size, args.seq_len, device, g)
+            def get_batch():
+                return fixed_x, fixed_y
+        else:
+            def get_batch():
+                return sample_batch(train_data, args.batch_size, args.seq_len, device, g)
     else:
         dataset_actual_name = f"tiny_shakespeare ({args.dataset_name})"
         tokens = load_tiny_shakespeare(args.dataset_name)
@@ -793,7 +817,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--data",
         default="synthetic",
-        choices=["synthetic", "tiny_shakespeare", "wikipedia"],
+        choices=["synthetic", "tiny_shakespeare", "wikipedia", "binance"],
     )
     p.add_argument("--dataset-name", default="karpathy/tiny_shakespeare")
     p.add_argument("--batch-size", type=int, default=128)
