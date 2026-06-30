@@ -16,3 +16,4 @@ data/
 *.pth
 *.bin
 results_1000_steps/
+results_2500_steps/

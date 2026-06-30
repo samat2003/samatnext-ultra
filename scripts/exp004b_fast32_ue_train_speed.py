@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # SPDX-License-Identifier: Apache-2.0
-"""EXP004B: Fast32 UE Training Speed Ladder with Cached Triton Forward Path.
+"""EXP004B / EXP004D: Fast32 UE Training Speed Ladder.
 
 Goal:
-Compare standard UE1, UE4, UE8, UE16, UE32, UE64, and UE128 on Andrej Karpathy's
-Tiny Shakespeare dataset. Support validation every 100 steps and checkpointing.
+Compare standard UE1, UE4, UE8, UE16, UE32, UE64, and UE128 on Tiny Shakespeare
+and real Wikipedia-scale data. Support validation and checkpointing.
 """
 from __future__ import annotations
 
@@ -547,6 +547,7 @@ def run_ue_train_loop(
         "measured_optimizer_updates": measured_optimizer_updates,
         "peak_cuda_memory_bytes": peak_mem,
         "best_val_loss": best_val_loss if best_val_loss != float("inf") else None,
+        "best_chk_path": str(best_chk_path) if best_chk_path is not None else None,
     }
     return metrics, profiler
 
@@ -567,15 +568,84 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
     
     # 2. Get data
     val_data = None
+    train_token_count = 0
+    val_token_count = 0
+    dataset_actual_name = "synthetic"
+    
     if args.data == "synthetic":
         x, y = static_batch(args, device)
         def get_batch():
             return x, y
+    elif args.data == "wikipedia":
+        dataset_actual_name = "wikimedia/wikipedia (20231101.en)"
+        print("Loading real Wikipedia-scale data using streaming...")
+        try:
+            from datasets import load_dataset
+            ds = load_dataset("wikimedia/wikipedia", "20231101.en", split="train", streaming=True)
+            tokens_list = bytearray()
+            target_toks = 45_000_000
+            for doc in ds:
+                tokens_list.extend(doc["text"].encode("utf-8"))
+                if len(tokens_list) >= target_toks:
+                    break
+            tokens = torch.tensor(list(tokens_list), dtype=torch.long)
+            print(f"Loaded {len(tokens):,} tokens from wikimedia/wikipedia.")
+        except Exception as exc:
+            dataset_actual_name = "wikipedia (20220301.en)"
+            print(f"Failed to load wikimedia/wikipedia: {exc}. Trying fallback 'wikipedia'...")
+            try:
+                ds = load_dataset("wikipedia", "20220301.en", split="train", streaming=True)
+                tokens_list = bytearray()
+                target_toks = 45_000_000
+                for doc in ds:
+                    tokens_list.extend(doc["text"].encode("utf-8"))
+                    if len(tokens_list) >= target_toks:
+                        break
+                tokens = torch.tensor(list(tokens_list), dtype=torch.long)
+                print(f"Loaded {len(tokens):,} tokens from fallback 'wikipedia'.")
+            except Exception as exc2:
+                dataset_actual_name = "wikitext (wikitext-103-raw-v1)"
+                print(f"Failed to load 'wikipedia': {exc2}. Trying fallback 'wikitext-103-raw-v1'...")
+                try:
+                    ds = load_dataset("wikitext", "wikitext-103-raw-v1", split="train", streaming=True)
+                    tokens_list = bytearray()
+                    target_toks = 45_000_000
+                    for doc in ds:
+                        tokens_list.extend(doc["text"].encode("utf-8"))
+                        if len(tokens_list) >= target_toks:
+                            break
+                    tokens = torch.tensor(list(tokens_list), dtype=torch.long)
+                    print(f"Loaded {len(tokens):,} tokens from fallback 'wikitext-103-raw-v1'.")
+                except Exception as exc3:
+                    raise RuntimeError(
+                        f"All datasets failed to load. Tried wikimedia/wikipedia ({exc}), "
+                        f"wikipedia ({exc2}), wikitext ({exc3})."
+                    )
+        
+        split = int(tokens.numel() * 0.9)
+        train_data = tokens[:split].contiguous()
+        val_data = tokens[split:].contiguous()
+        
+        train_token_count = train_data.numel()
+        val_token_count = val_data.numel()
+        
+        g = torch.Generator().manual_seed(args.seed)
+        if args.overfit_one_batch:
+            fixed_x, fixed_y = sample_batch(train_data, args.batch_size, args.seq_len, device, g)
+            def get_batch():
+                return fixed_x, fixed_y
+        else:
+            def get_batch():
+                return sample_batch(train_data, args.batch_size, args.seq_len, device, g)
     else:
+        dataset_actual_name = f"tiny_shakespeare ({args.dataset_name})"
         tokens = load_tiny_shakespeare(args.dataset_name)
         split = int(tokens.numel() * 0.9)
         train_data = tokens[:split].contiguous()
         val_data = tokens[split:].contiguous()
+        
+        train_token_count = train_data.numel()
+        val_token_count = val_data.numel()
         
         g = torch.Generator().manual_seed(args.seed)
         if args.overfit_one_batch:
@@ -616,6 +686,11 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
     tokens_per_step = args.batch_size * args.seq_len
     train_input_tok_s = (tokens_per_step * metrics["measured_forward_loss_calls"]) / metrics["train_elapsed_sec"]
     
+    # Calculate effective data passes
+    effective_data_passes = 0.0
+    if train_token_count > 0:
+        effective_data_passes = (tokens_per_step * args.steps) / train_token_count
+
     # 6. Upper-bound Estimations
     avgs = profiler.averages()
     avg_data = avgs["avg_data_fetch_sec"]
@@ -636,7 +711,12 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
 
     # Required output structure
     output = {
-        "experiment": "EXP004B",
+        "experiment": "EXP004D",
+        "dataset_name": dataset_actual_name,
+        "train_token_count": train_token_count,
+        "val_token_count": val_token_count,
+        "effective_train_data_passes": effective_data_passes,
+        
         "mode": args.mode,
         "update_every": update_every,
         "batch_size": args.batch_size,
@@ -667,6 +747,7 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
         "final_loss": metrics["final_loss"],
         "loss_decreased": bool(metrics["first_loss"] is not None and metrics["final_loss"] is not None and metrics["final_loss"] < metrics["first_loss"]),
         "best_val_loss": metrics["best_val_loss"],
+        "checkpoint_path": metrics["best_chk_path"],
         "peak_cuda_memory_bytes": metrics["peak_cuda_memory_bytes"],
         
         # Integrity checks
@@ -706,12 +787,12 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="EXP004B Fast32 UE Training Speed Ladder")
+    p = argparse.ArgumentParser(description="EXP004B / EXP004D Fast32 UE Training Speed Ladder")
     p.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
     p.add_argument(
         "--data",
         default="synthetic",
-        choices=["synthetic", "tiny_shakespeare"],
+        choices=["synthetic", "tiny_shakespeare", "wikipedia"],
     )
     p.add_argument("--dataset-name", default="karpathy/tiny_shakespeare")
     p.add_argument("--batch-size", type=int, default=128)
