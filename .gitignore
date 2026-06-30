@@ -32,3 +32,4 @@ results_market_pretraining_long/
 !data/reasoning_finetune/**/metadata.json
 !data/reasoning_finetune/**/sample_preview.json
 !data/reasoning_finetune/**/DATASET_CARD.md
+results_reasoning_sft/
