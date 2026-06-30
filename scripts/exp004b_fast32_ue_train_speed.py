@@ -3,8 +3,8 @@
 """EXP004B: Fast32 UE Training Speed Ladder with Cached Triton Forward Path.
 
 Goal:
-Reach or approach 1M+ train tokens/sec using the cached Triton forward path
-on non-update steps, while keeping update steps as true autograd training.
+Compare standard UE1, UE4, UE8, UE16, UE32, UE64, and UE128 on Andrej Karpathy's
+Tiny Shakespeare dataset. Support validation every 100 steps and checkpointing.
 """
 from __future__ import annotations
 
@@ -350,13 +350,41 @@ def run_ue_train_loop(
     update_every: int,
     warmup_steps: int,
     measured_steps: int,
+    val_data: torch.Tensor | None = None,
 ) -> tuple[dict[str, Any], ComponentProfiler]:
-    """Execute the main training loop with profiling."""
+    """Execute the main training loop with profiling and intermediate evaluation."""
     model.train()
     global_step = 0
     
     cached_params = None
     amp = args.amp
+    best_val_loss = float("inf")
+    best_chk_path = None
+
+    # Determine out directory for checkpoints
+    out_dir = ROOT / "results_1000_steps"
+    out_dir.mkdir(exist_ok=True)
+
+    # Helper function to compute validation loss
+    def eval_val():
+        if val_data is None:
+            return None
+        model.eval()
+        val_losses = []
+        g_val = torch.Generator().manual_seed(args.seed + 999)
+        with torch.no_grad():
+            for _ in range(8):
+                vx, vy = sample_batch(val_data, args.batch_size, args.seq_len, device, g_val)
+                if args.forward_impl == "cached_triton_loss":
+                    loss_v, _ = cached_triton_forward_loss(model, None, vx, vy, amp)
+                else:
+                    with autocast_ctx(device, amp):
+                        out_v = model(vx, return_metadata=False)
+                        loss_v = F.cross_entropy(out_v.logits.reshape(-1, 256), vy.reshape(-1))
+                val_losses.append(loss_v.item())
+        avg_val = sum(val_losses) / len(val_losses)
+        model.train()
+        return avg_val
 
     # --- WARMUP PASS (Not timed or profiled) ---
     for _ in range(warmup_steps):
@@ -413,7 +441,7 @@ def run_ue_train_loop(
 
     t_start_loop = time.perf_counter()
 
-    for _ in range(measured_steps):
+    for step_idx in range(measured_steps):
         # 1. Data Fetch
         t_comp = time.perf_counter()
         x, y = get_batch()
@@ -489,6 +517,23 @@ def run_ue_train_loop(
             first_loss = lv
         final_loss = lv
 
+        # --- Periodic evaluation every eval_every steps ---
+        if args.eval_every is not None and (step_idx + 1) % args.eval_every == 0:
+            current_val_loss = eval_val()
+            if current_val_loss is not None:
+                print(f"[Step {step_idx + 1}] Train CE: {lv:.4f}, Val CE: {current_val_loss:.4f}")
+                if current_val_loss < best_val_loss:
+                    best_val_loss = current_val_loss
+                    best_chk_path = out_dir / f"checkpoint_{args.mode}.pt"
+                    # Save best checkpoint
+                    torch.save({
+                        "model_state": model.state_dict(),
+                        "optimizer_state": optimizer.state_dict(),
+                        "config": json.loads(FROZEN_CONFIG.read_text(encoding="utf-8")),
+                        "step": step_idx + 1,
+                        "best_val_loss": best_val_loss,
+                    }, best_chk_path)
+
     synchronize(device)
     total_elapsed = time.perf_counter() - t_start_loop
     peak_mem = peak_memory(device)
@@ -501,6 +546,7 @@ def run_ue_train_loop(
         "measured_forward_loss_calls": measured_forward_loss_calls,
         "measured_optimizer_updates": measured_optimizer_updates,
         "peak_cuda_memory_bytes": peak_mem,
+        "best_val_loss": best_val_loss if best_val_loss != float("inf") else None,
     }
     return metrics, profiler
 
@@ -520,6 +566,7 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
     model = make_model(device)
     
     # 2. Get data
+    val_data = None
     if args.data == "synthetic":
         x, y = static_batch(args, device)
         def get_batch():
@@ -562,6 +609,7 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
         update_every=update_every,
         warmup_steps=args.warmup_steps,
         measured_steps=args.steps,
+        val_data=val_data,
     )
     
     # Calculate measured stats
@@ -585,25 +633,6 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
         cycle_time = non_update_time * (m - 1) + update_time
         est_tok_s = (tokens_per_step * m) / cycle_time if cycle_time > 0 else 0.0
         estimations[f"estimated_tok_s_ue{m}"] = est_tok_s
-
-    # Val loss eval (if applicable)
-    best_val_loss = None
-    if args.data == "tiny_shakespeare" and not args.overfit_one_batch:
-        model.eval()
-        val_losses = []
-        g_val = torch.Generator().manual_seed(args.seed + 999)
-        with torch.no_grad():
-            for _ in range(8):
-                vx, vy = sample_batch(val_data, args.batch_size, args.seq_len, device, g_val)
-                if args.forward_impl == "cached_triton_loss":
-                    loss_v, _ = cached_triton_forward_loss(model, None, vx, vy, args.amp)
-                else:
-                    with autocast_ctx(device, args.amp):
-                        out_v = model(vx, return_metadata=False)
-                        loss_v = F.cross_entropy(out_v.logits.reshape(-1, 256), vy.reshape(-1))
-                val_losses.append(loss_v.item())
-        best_val_loss = sum(val_losses) / len(val_losses)
-        model.train()
 
     # Required output structure
     output = {
@@ -630,14 +659,14 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
         # Primary speed metrics
         "train_elapsed_sec": metrics["train_elapsed_sec"],
         "train_input_tok_s": train_input_tok_s,
-        "forward_loss_tok_s": train_input_tok_s, # same under scheduled style
+        "forward_loss_tok_s": train_input_tok_s,
         "update_step_tok_s": (tokens_per_step * metrics["measured_optimizer_updates"]) / metrics["train_elapsed_sec"],
         
         # Loss checks
         "first_loss": metrics["first_loss"],
         "final_loss": metrics["final_loss"],
         "loss_decreased": bool(metrics["first_loss"] is not None and metrics["final_loss"] is not None and metrics["final_loss"] < metrics["first_loss"]),
-        "best_val_loss": best_val_loss,
+        "best_val_loss": metrics["best_val_loss"],
         "peak_cuda_memory_bytes": metrics["peak_cuda_memory_bytes"],
         
         # Integrity checks
@@ -712,6 +741,7 @@ def parse_args() -> argparse.Namespace:
         choices=["py_autograd", "fused_backward"],
     )
     p.add_argument("--profile-components", action="store_true")
+    p.add_argument("--eval-every", type=int, default=None)
     p.add_argument("--seed", type=int, default=1234)
     return p.parse_args()
 

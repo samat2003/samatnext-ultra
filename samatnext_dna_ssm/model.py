@@ -192,17 +192,27 @@ class DynamicDnaSsmLM(nn.Module):
 
     @staticmethod
     def _apply_ssm_layer(x: Tensor, a: Tensor, b: Tensor, c: Tensor, g: Tensor, residual_scale: float) -> Tensor:
-        retention = torch.sigmoid(a).unsqueeze(0)
-        b = b.unsqueeze(0)
-        c = c.unsqueeze(0)
-        gate = F.silu(g).unsqueeze(0)
-        h = torch.zeros(x.shape[0], x.shape[-1], device=x.device, dtype=x.dtype)
-        outputs = []
-
-        for pos in range(x.shape[1]):
-            x_t = x[:, pos, :]
-            h = retention * h + b * x_t
-            y_t = c * h
-            outputs.append(x_t + residual_scale * gate * y_t)
-
-        return torch.stack(outputs, dim=1)
+        T = x.shape[1]
+        device = x.device
+        dtype = x.dtype
+        
+        retention = torch.sigmoid(a)
+        gate = F.silu(g)
+        
+        steps_float = torch.arange(T, device=device, dtype=dtype)
+        powers = retention.unsqueeze(1) ** steps_float.unsqueeze(0)
+        
+        steps_idx = torch.arange(T, device=device, dtype=torch.long)
+        t_idx = steps_idx.unsqueeze(1)
+        i_idx = steps_idx.unsqueeze(0)
+        diff = t_idx - i_idx
+        mask = (diff >= 0).to(dtype)
+        
+        diff_clamped = torch.clamp(diff, min=0)
+        M = powers[:, diff_clamped] * mask.unsqueeze(0)
+        
+        inp = b.unsqueeze(0).unsqueeze(1) * x
+        h = torch.einsum('dti,bid->btd', M, inp)
+        
+        y = c.unsqueeze(0).unsqueeze(1) * h
+        return x + residual_scale * gate.unsqueeze(0).unsqueeze(1) * y
