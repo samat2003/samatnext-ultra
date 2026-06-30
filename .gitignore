@@ -46,3 +46,7 @@ results_reasoning_sft_v2/
 !data/quant_decision/fast32_quant_decision_v1/metadata.json
 !data/quant_decision/fast32_quant_decision_v1/sample_preview.json
 !data/quant_decision/fast32_quant_decision_v1/DATASET_CARD.md
+results_quant_decision_baseline/
+
+# EXP010 Exceptions
+!data/quant_decision/fast32_quant_decision_v1_audited/
