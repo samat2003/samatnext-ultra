@@ -54,3 +54,4 @@ results_quant_decision_ue32/
 results_binary_dir/
 data/quant_decision/binary_dir_H*/
 data/quant_decision/vol_regime_H*/
+results_vol_regime/
