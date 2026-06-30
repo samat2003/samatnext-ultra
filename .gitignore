@@ -24,3 +24,4 @@ data/market_pretrain/**/*.bin
 data/market_pretrain/**/train.bin
 data/market_pretrain/**/val.bin
 data/market_pretrain/**/test.bin
+results_market_pretraining/
