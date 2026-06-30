@@ -51,3 +51,5 @@ results_quant_decision_baseline/
 # EXP010 Exceptions
 !data/quant_decision/fast32_quant_decision_v1_audited/
 results_quant_decision_ue32/
+results_binary_dir/
+data/quant_decision/binary_dir_H*/
