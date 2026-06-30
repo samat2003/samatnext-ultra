@@ -17,3 +17,10 @@ data/
 *.bin
 results_1000_steps/
 results_2500_steps/
+
+data/market_pretrain/**/raw/
+data/market_pretrain/**/processed/
+data/market_pretrain/**/*.bin
+data/market_pretrain/**/train.bin
+data/market_pretrain/**/val.bin
+data/market_pretrain/**/test.bin
