@@ -1,0 +1,73 @@
+{
+  "dataset_name": "fast32_quant_decision_v1",
+  "dataset_version": "1.0.0",
+  "creation_date": "2026-06-30",
+  "total_examples": 60000,
+  "split_counts": {
+    "train": 50000,
+    "validation": 5000,
+    "test": 5000
+  },
+  "examples_per_task": {
+    "binary_dir": 7694,
+    "three_class_dir": 10431,
+    "vol_regime": 10583,
+    "breakout": 10640,
+    "trend_range": 10652
+  },
+  "class_balances": {
+    "binary_dir": {
+      "counts": {
+        "UP": 3953,
+        "DOWN": 3741
+      },
+      "majority_class_baseline": 0.5137769690668053
+    },
+    "three_class_dir": {
+      "counts": {
+        "UP": 3889,
+        "DOWN": 3723,
+        "FLAT": 2819
+      },
+      "majority_class_baseline": 0.3728309845652382
+    },
+    "vol_regime": {
+      "counts": {
+        "VOL_FLAT": 3999,
+        "VOL_DOWN": 3978,
+        "VOL_UP": 2606
+      },
+      "majority_class_baseline": 0.3778701691391855
+    },
+    "breakout": {
+      "counts": {
+        "NO_BREAKOUT": 6213,
+        "BREAKOUT": 4427
+      },
+      "majority_class_baseline": 0.5839285714285715
+    },
+    "trend_range": {
+      "counts": {
+        "RANGE": 59,
+        "TREND": 10593
+      },
+      "majority_class_baseline": 0.9944611340593316
+    }
+  },
+  "train_token_count": 4373759,
+  "val_token_count": 436983,
+  "test_token_count": 437731,
+  "max_sequence_length": 91,
+  "average_sequence_length": 86.47518,
+  "split_boundaries": {
+    "train_max_timestamp": 1752952320000,
+    "val_max_timestamp": 1753479360000
+  },
+  "random_seed": 42,
+  "vocab_size": 256,
+  "byte_level_encoding": true,
+  "confirmation_no_trading_labels": true,
+  "confirmation_no_profit_labels": true,
+  "confirmation_no_architecture_changes": true,
+  "training_ready": true
+}
