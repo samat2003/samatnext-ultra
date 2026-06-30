@@ -1,0 +1,22 @@
+{
+  "architecture_frozen_after_commit": "1c8e488b3453f100e59c6b545f4ec646b3e27eca",
+  "chunk_size": 32,
+  "d_model": 256,
+  "layers": 32,
+  "name": "Fast32 frozen Dynamic DNA-SSM inference checkpoint",
+  "no_training_after_freeze": true,
+  "parameter_count": 216320,
+  "separate_lm_head": false,
+  "stored_per_layer_trainable_parameters": false,
+  "tied_output_projection": true,
+  "trainable_act_head": false,
+  "trainable_parameter_sources": [
+    "token_embed.weight",
+    "dna hypernetwork"
+  ],
+  "variants": {
+    "original_stateful_32": "architecture-preserving Fast32 stateful recurrence",
+    "precomposed_stateless_32_fused_e2e": "fastest speed ablation; not original stateful SSM"
+  },
+  "vocab_size": 256
+}
