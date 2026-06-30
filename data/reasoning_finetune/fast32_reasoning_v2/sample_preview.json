@@ -1,0 +1,37 @@
+{
+  "boolean_only": {
+    "id": "train_000000",
+    "category": "boolean_only",
+    "question": "TRUE OR NOT TRUE",
+    "answer": "TRUE",
+    "text": "Q: TRUE OR NOT TRUE\nA: TRUE"
+  },
+  "arithmetic_compare_only": {
+    "id": "train_000000",
+    "category": "arithmetic_compare_only",
+    "question": "432 vs 853",
+    "answer": "LT",
+    "text": "Q: 432 vs 853\nA: LT"
+  },
+  "arithmetic_small_add_sub_only": {
+    "id": "train_000000",
+    "category": "arithmetic_small_add_sub_only",
+    "question": "289 + 606",
+    "answer": "895",
+    "text": "Q: 289 + 606\nA: 895"
+  },
+  "market_direction_only": {
+    "id": "train_000000",
+    "category": "market_direction_only",
+    "question": "ETHUSDT direction 1750683240000 to 1750683540000",
+    "answer": "UP",
+    "text": "Q: ETHUSDT direction 1750683240000 to 1750683540000\nA: UP"
+  },
+  "mixed_answer_only": {
+    "id": "train_000000",
+    "category": "arithmetic_compare_only",
+    "question": "156 vs 577",
+    "answer": "LT",
+    "text": "Q: 156 vs 577\nA: LT"
+  }
+}
