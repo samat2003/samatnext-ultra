@@ -1,0 +1,47 @@
+{
+  "dataset_name": "fast32_reasoning_v2",
+  "creation_date": "2026-06-30",
+  "vocab_size": 256,
+  "byte_level_encoding": true,
+  "tasks": {
+    "boolean_only": {
+      "total_examples": 60000,
+      "train_token_count": 1500319,
+      "val_token_count": 149922,
+      "max_len": 31,
+      "avg_len": 29.00638
+    },
+    "arithmetic_compare_only": {
+      "total_examples": 60000,
+      "train_token_count": 990929,
+      "val_token_count": 99087,
+      "max_len": 19,
+      "avg_len": 18.81858
+    },
+    "arithmetic_small_add_sub_only": {
+      "total_examples": 60000,
+      "train_token_count": 991197,
+      "val_token_count": 99005,
+      "max_len": 20,
+      "avg_len": 18.82394
+    },
+    "market_direction_only": {
+      "total_examples": 60000,
+      "train_token_count": 2950680,
+      "val_token_count": 294968,
+      "max_len": 59,
+      "avg_len": 58.0136
+    },
+    "mixed_answer_only": {
+      "total_examples": 60000,
+      "train_token_count": 1611636,
+      "val_token_count": 160639,
+      "max_len": 59,
+      "avg_len": 31.23272
+    }
+  },
+  "confirmation_no_trading_labels": true,
+  "confirmation_no_profit_labels": true,
+  "confirmation_no_architecture_changes": true,
+  "training_ready": true
+}

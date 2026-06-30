@@ -33,3 +33,10 @@ results_market_pretraining_long/
 !data/reasoning_finetune/**/sample_preview.json
 !data/reasoning_finetune/**/DATASET_CARD.md
 results_reasoning_sft/
+
+# EXP008B Exceptions
+!data/reasoning_finetune/fast32_reasoning_v2/
+!data/reasoning_finetune/fast32_reasoning_v2/metadata.json
+!data/reasoning_finetune/fast32_reasoning_v2/sample_preview.json
+!data/reasoning_finetune/fast32_reasoning_v2/DATASET_CARD.md
+results_reasoning_sft_v2/
