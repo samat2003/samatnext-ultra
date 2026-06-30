@@ -40,3 +40,9 @@ results_reasoning_sft/
 !data/reasoning_finetune/fast32_reasoning_v2/sample_preview.json
 !data/reasoning_finetune/fast32_reasoning_v2/DATASET_CARD.md
 results_reasoning_sft_v2/
+
+# EXP009 Exceptions
+!data/quant_decision/fast32_quant_decision_v1/
+!data/quant_decision/fast32_quant_decision_v1/metadata.json
+!data/quant_decision/fast32_quant_decision_v1/sample_preview.json
+!data/quant_decision/fast32_quant_decision_v1/DATASET_CARD.md

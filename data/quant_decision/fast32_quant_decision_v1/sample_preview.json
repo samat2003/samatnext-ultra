@@ -1,0 +1,62 @@
+{
+  "binary_dir": {
+    "split": "train",
+    "id": "BNBUSDT_1749430800000_binary_dir_5",
+    "symbol": "BNBUSDT",
+    "timestamp": 1749430800000,
+    "task": "binary_dir",
+    "horizon": 5,
+    "context_window": 32,
+    "question": "BNBUSDT past returns [-0.02%,+0.02%,-0.01%,+0.01%,+0.00%], H=5 binary dir?",
+    "answer": "DOWN",
+    "text": "Q: BNBUSDT past returns [-0.02%,+0.02%,-0.01%,+0.01%,+0.00%], H=5 binary dir?\nA: DOWN"
+  },
+  "three_class_dir": {
+    "split": "train",
+    "id": "BTCUSDT_1750837140000_three_class_dir_5",
+    "symbol": "BTCUSDT",
+    "timestamp": 1750837140000,
+    "task": "three_class_dir",
+    "horizon": 5,
+    "context_window": 32,
+    "question": "BTCUSDT past returns [-0.01%,+0.00%,+0.01%,-0.01%,+0.10%], H=5 3-class dir?",
+    "answer": "FLAT",
+    "text": "Q: BTCUSDT past returns [-0.01%,+0.00%,+0.01%,-0.01%,+0.10%], H=5 3-class dir?\nA: FLAT"
+  },
+  "vol_regime": {
+    "split": "train",
+    "id": "BNBUSDT_1751088660000_vol_regime_15",
+    "symbol": "BNBUSDT",
+    "timestamp": 1751088660000,
+    "task": "vol_regime",
+    "horizon": 15,
+    "context_window": 32,
+    "question": "BNBUSDT past returns [-0.01%,+0.00%,+0.00%,+0.00%,+0.01%], H=15 vol regime?",
+    "answer": "VOL_DOWN",
+    "text": "Q: BNBUSDT past returns [-0.01%,+0.00%,+0.00%,+0.00%,+0.01%], H=15 vol regime?\nA: VOL_DOWN"
+  },
+  "breakout": {
+    "split": "train",
+    "id": "BNBUSDT_1752043500000_breakout_15",
+    "symbol": "BNBUSDT",
+    "timestamp": 1752043500000,
+    "task": "breakout",
+    "horizon": 15,
+    "context_window": 32,
+    "question": "BNBUSDT past returns [-0.06%,+0.00%,+0.01%,+0.03%,+0.00%], H=15 breakout?",
+    "answer": "NO_BREAKOUT",
+    "text": "Q: BNBUSDT past returns [-0.06%,+0.00%,+0.01%,+0.03%,+0.00%], H=15 breakout?\nA: NO_BREAKOUT"
+  },
+  "trend_range": {
+    "split": "train",
+    "id": "SOLUSDT_1749902700000_trend_range_60",
+    "symbol": "SOLUSDT",
+    "timestamp": 1749902700000,
+    "task": "trend_range",
+    "horizon": 60,
+    "context_window": 32,
+    "question": "SOLUSDT past returns [-0.02%,-0.01%,+0.08%,-0.01%,-0.04%], H=60 regime?",
+    "answer": "RANGE",
+    "text": "Q: SOLUSDT past returns [-0.02%,-0.01%,+0.08%,-0.01%,-0.04%], H=60 regime?\nA: RANGE"
+  }
+}
