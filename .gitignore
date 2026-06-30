@@ -50,3 +50,4 @@ results_quant_decision_baseline/
 
 # EXP010 Exceptions
 !data/quant_decision/fast32_quant_decision_v1_audited/
+results_quant_decision_ue32/
