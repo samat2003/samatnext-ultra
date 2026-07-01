@@ -20,10 +20,13 @@ To maintain absolute quantitative and scientific honesty, please adhere to the f
 ## 3. Discrepancies in Latency Definitions
 Do not misrepresent execution speeds:
 * **Token Step vs. Full Sequence**:
-  * **13.82 µs** is the speed of a **single token step** (stateful recurrent kernel execution).
-  * **442.8 µs** is the speed of processing the **full 128-byte sequence** under a single-batch classification pipeline (text to class).
+  * **13–14 µs** is the speed of a **single token step** (stateful CUDA Graph Triton recurrence). Not comparable to the full 128-token classification.
+  * **0.443 ms (443 µs)** is the **REMOVED full-pipeline classification latency** at batch=1. This includes text encoding, GPU upload, 128-token forward pass, argmax, and decode.
 * **Throughput vs. Latency**:
-  * The batched throughput of **121,029 examples/sec** (batch size 256) is an amortized metric and should not be claimed as the latency for a single-batch, single-item transaction.
+  * **121,029 examples/sec** (batch=256) is amortised batched *inference* throughput. Do not describe it as update speed, training speed, or single-item latency.
+  * **15.49M input tokens/sec** is the corresponding input-token throughput for batch=256 inference. Do not describe it as training throughput.
+* **Ablation vs. Production**:
+  * **6–8 µs / token** is the stateless fused ablation speed. This ablation path does not update hidden state and is not the production inference path.
 
 ---
 

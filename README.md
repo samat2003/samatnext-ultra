@@ -1,6 +1,6 @@
 # Fast32: Stateful Byte-Level Sequence Model
 
-Fast32 is a 216K-parameter original-stateful byte-level model. It failed noisy raw direction prediction but succeeded on balanced binary volatility-regime classification, reaching 71.38% full-test accuracy with 0% invalid outputs and no single-class collapse. Batched inference reaches 121K examples/sec on RTX 5070 Ti Laptop GPU. These are volatility-regime labels, not trading decisions.
+The final Fast32 volatility-regime classifier reaches **71.38%** full-test accuracy with **0%** invalid outputs and no single-class collapse. On an RTX 5070 Ti Laptop GPU, the REMOVED final classifier benchmark runs at **443 µs/example** at batch=1 and **121K examples/sec** at batch=256 (amortized). The original-stateful CUDA-graph token-step path runs in the **13–14 µs/token** range. These are volatility-regime labels, not trading decisions.
 
 ---
 

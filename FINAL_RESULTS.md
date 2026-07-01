@@ -17,30 +17,36 @@ Fast32 is a 216,320-parameter stateful byte-level recurrent model designed for q
 
 ---
 
-## 3. Final Speed & Throughput Metrics (RTX 5070 Ti Laptop GPU)
+## 3. Final Speed Metrics (RTX 5070 Ti Laptop GPU, REMOVED benchmark)
 
-| Benchmark Split | Batch Size | Latency per Call / Step | Throughput (Ex/sec) | Throughput (Tok/sec) |
+| Benchmark | Batch | Latency | Throughput (Ex/sec) | Throughput (Tok/sec) |
 |---|---|---|---|---|
-| **Full Classifier Pipeline** | 1 | 442.8 µs / call | 2,258 | 289,067 |
-| **Full Classifier Pipeline** | 256 | 8.26 µs / example | **121,029** | **15.49M** |
-| **Pure Model Forward Only** | 256 | 7.16 µs / example | **139,578** | **17.87M** |
-| **Original-Stateful Recurrence** | 1 | **13.82 µs / token** | — | 72,359 |
-| **Stateless Fused Ablation** | 1 | **7.37 µs / token** | — | 135,685 |
+| **REMOVED Final Classifier** | 1 | **0.443 ms / example** | 2,258 | 289,067 |
+| **REMOVED Final Classifier** | 16 | 0.485 ms / call | 32,976 | 4.22M |
+| **REMOVED Final Classifier** | 64 | 0.734 ms / call | 87,181 | 11.16M |
+| **REMOVED Final Classifier** | 256 | 2.115 ms / call · 8.26 µs amortized | **121,029** | **15.49M** |
+| **Original-Stateful Token-Step** *(CUDA Graph)* | 1 | **13–14 µs / token** | — | — |
+| **Stateless Fused Ablation** *(ablation only)* | 1 | 6–8 µs / token | — | — |
+
+> **Note**: The REMOVED benchmark times a full-prompt forward pass over `seq_len=128` with prebuilt GPU tensors (no Python string overhead inside timing). The 13–14 µs token-step is a single Triton + CUDA Graph recurrence step. These are distinct measurements.
 
 ---
 
-## 4. Latency and Throughput Definition
-* **13.82 µs / token**: Measures **single-token cached/fused stateful step recurrence latency** using CUDA Graphs and custom Triton kernels. This represents the core model inference speed when updating hidden state $h$.
-* **7.37 µs / token**: Measures the stateless speed ablation path (depth precomposed, no hidden state updates). This is a speed baseline only.
-* **442.8 µs / example**: Represents the **honest full-pipeline classification latency** at batch=1. This includes text encoding, sequence padding, GPU data transfer, forward execution over 128 tokens, argmax extraction, and string decoding.
-* **8.26 µs / example**: Represents the amortized full-pipeline classification latency when batched at 256.
+## 4. Latency and Throughput Definitions
+
+* **0.443 ms / example (batch=1)**: Full-pipeline classification latency — text encoding, GPU upload, 128-token forward pass, argmax, decode — measured with prebuilt GPU tensors (REMOVED path).
+* **8.26 µs / example amortized (batch=256)**: Same pipeline, throughput-optimised batched path. Reports **121,029 examples/sec** and **15.49M input tokens/sec**.
+* **13–14 µs / token**: Single-token CUDA Graph stateful recurrence step latency. Not comparable to the 128-token classifier latency above.
+* **6–8 µs / token**: Stateless fused ablation (no hidden-state update). Speed reference only — not used in the final classifier.
 
 ---
 
 ## 5. Claims and Limitations (What NOT to claim)
-* **Do not claim profitability or live trading readiness**: These volatility regime labels represent realized volatility thresholds, not buy/sell/hold decisions. This is not a trading strategy.
-* **Do not claim 7.65 µs full-pipeline classification speed**: The 7.65 µs / 13.82 µs metrics represent a single token step. The full 128-token classification takes ~442.8 µs.
-* **Do not claim to beat classical quant ML baselines**: High-performance quant ML baselines (such as LightGBM, XGBoost, or logistic regressions) have not been trained or compared yet.
+
+* **Do not claim profitability or live trading readiness**: These volatility-regime labels predict realized volatility thresholds, not buy/sell/hold decisions. This is not a trading strategy.
+* **Do not claim 6–8 µs for the full 128-token classification**: Those µs figures are single-token recurrence steps only. The full classification takes ~443 µs at batch=1.
+* **Do not claim the 15.49M tokens/sec figure is training speed**: It is batched inference throughput only.
+* **Do not claim to beat classical quant ML baselines**: LightGBM/XGBoost/logistic-regression comparisons have not been run and remain future work.
 
 ---
 
