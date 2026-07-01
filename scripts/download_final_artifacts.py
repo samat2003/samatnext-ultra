@@ -1,46 +1,28 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Downloads final artifacts (checkpoint, metadata, and dataset) from GitHub Release assets.
+"""Downloads final artifacts from GitHub Release assets using the gh CLI.
 
-Verifies checkpoint hash and extracts the dataset tarball automatically.
+Supports private repositories by leveraging the local authenticated gh CLI session.
 """
 
 import hashlib
 import os
+import shutil
+import subprocess
 import sys
 import tarfile
-import urllib.request
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-CHECKPOINT_URL = "https://github.com/samat2003/samatnext-ultra/releases/download/fast32-vol-regime-final-v1/best_val_accuracy.pt"
-METADATA_URL   = "https://github.com/samat2003/samatnext-ultra/releases/download/fast32-vol-regime-final-v1/final_checkpoint_metadata.json"
-DATASET_URL    = "https://github.com/samat2003/samatnext-ultra/releases/download/fast32-vol-regime-final-v1/vol_regime_H15_C60.tar.gz"
-
 CHECKPOINT_PATH = ROOT / "results_vol_regime" / "best_val_accuracy.pt"
 METADATA_PATH   = ROOT / "results_vol_regime" / "final_checkpoint_metadata.json"
-DATASET_TAR     = ROOT / "data" / "quant_decision" / "vol_regime_H15_C60.tar.gz"
 DATASET_DIR     = ROOT / "data" / "quant_decision"
+TARGET_TEST_FILE = DATASET_DIR / "vol_regime_H15_C60" / "test.jsonl"
 
+RELEASE_TAG = "fast32-vol-regime-final-v1"
 EXPECTED_SHA256 = "b2f304a0ff5dec4beaddc9d15fde8dad42d73338f8c4c8f25be9ef665f3c38a4"
-
-
-def download_file(url: str, dest_path: Path):
-    dest_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Downloading {url} to {dest_path}...")
-    
-    def report_hook(block_num, block_size, total_size):
-        read_so_far = block_num * block_size
-        if total_size > 0:
-            percent = min(100.0, (read_so_far / total_size) * 100.0)
-            sys.stdout.write(f"\r  Progress: {percent:.1f}% ({read_so_far / 1024 / 1024:.1f} MB / {total_size / 1024 / 1024:.1f} MB)")
-        else:
-            sys.stdout.write(f"\r  Progress: {read_so_far / 1024 / 1024:.1f} MB downloaded")
-        sys.stdout.flush()
-        
-    urllib.request.urlretrieve(url, str(dest_path), reporthook=report_hook)
-    print("\n  Download complete.")
 
 
 def sha256_file(path: Path) -> str:
@@ -53,22 +35,72 @@ def sha256_file(path: Path) -> str:
 
 def main():
     print("=================================================================")
-    print("FAST32 ARTIFACT DOWNLOADER")
+    print("FAST32 PRIVATE ARTIFACT DOWNLOADER (via gh CLI)")
     print("=================================================================")
 
-    # 1. Download Checkpoint
-    if CHECKPOINT_PATH.exists():
-        print(f"Checkpoint already exists at {CHECKPOINT_PATH}. Checking hash...")
-        if sha256_file(CHECKPOINT_PATH) == EXPECTED_SHA256:
-            print("  Hash matches expected value. Skipping download.")
-        else:
-            print("  Hash mismatch! Redownloading...")
-            download_file(CHECKPOINT_URL, CHECKPOINT_PATH)
-    else:
-        download_file(CHECKPOINT_URL, CHECKPOINT_PATH)
+    # Check if checkpoint already exists and is valid
+    if CHECKPOINT_PATH.exists() and TARGET_TEST_FILE.exists():
+        print("Verifying existing checkpoint hash...")
+        try:
+            if sha256_file(CHECKPOINT_PATH) == EXPECTED_SHA256:
+                print("  [PASS] Existing checkpoint hash matches ✓")
+                print("  All artifacts are already present. Skipping download.")
+                print("=================================================================")
+                return
+        except Exception:
+            pass
+
+    # Create directories
+    ROOT.joinpath("results_vol_regime").mkdir(parents=True, exist_ok=True)
+    DATASET_DIR.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as tmpdir_str:
+        tmpdir = Path(tmpdir_str)
+        print(f"Downloading release assets via gh CLI to temp folder...")
+        
+        # Invoke gh release download
+        cmd = [
+            "gh", "release", "download", RELEASE_TAG,
+            "--dir", str(tmpdir),
+            "--clobber"
+        ]
+        
+        try:
+            r = subprocess.run(cmd, cwd=str(ROOT), check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            print("\n[ERROR] Failed to run 'gh release download'.")
+            print("Please ensure the GitHub CLI (gh) is installed and authenticated via 'gh auth login'.")
+            print(f"Details: {e}")
+            sys.exit(1)
+
+        print("Downloads completed. Moving files to destination...")
+
+        # Move checkpoint
+        tmp_chk = tmpdir / "best_val_accuracy.pt"
+        if tmp_chk.exists():
+            shutil.move(str(tmp_chk), str(CHECKPOINT_PATH))
+            print(f"  Moved checkpoint to {CHECKPOINT_PATH}")
+
+        # Move metadata
+        tmp_meta = tmpdir / "final_checkpoint_metadata.json"
+        if tmp_meta.exists():
+            shutil.move(str(tmp_meta), str(METADATA_PATH))
+            print(f"  Moved metadata to {METADATA_PATH}")
+
+        # Extract dataset tarball
+        tmp_tar = tmpdir / "vol_regime_H15_C60.tar.gz"
+        if tmp_tar.exists():
+            print("Extracting dataset tarball...")
+            with tarfile.open(tmp_tar, "r:gz") as tar:
+                tar.extractall(path=str(DATASET_DIR))
+            print(f"  Extracted dataset to {DATASET_DIR / 'vol_regime_H15_C60'}")
 
     # Verify Checkpoint Hash
-    print("Verifying checkpoint hash...")
+    print("\nVerifying downloaded checkpoint hash...")
+    if not CHECKPOINT_PATH.exists():
+        print("  [ERROR] Checkpoint was not successfully moved!")
+        sys.exit(1)
+        
     file_sha = sha256_file(CHECKPOINT_PATH)
     if file_sha == EXPECTED_SHA256:
         print(f"  [PASS] SHA256 matches: {file_sha} ✓")
@@ -76,31 +108,8 @@ def main():
         print(f"  [FAIL] SHA256 mismatch! Found {file_sha}, expected {EXPECTED_SHA256}")
         sys.exit(1)
 
-    # 2. Download Metadata
-    if not METADATA_PATH.exists():
-        download_file(METADATA_URL, METADATA_PATH)
-    else:
-        print(f"Metadata already exists at {METADATA_PATH}. Skipping download.")
-
-    # 3. Download and Extract Dataset
-    target_test_file = DATASET_DIR / "vol_regime_H15_C60" / "test.jsonl"
-    if target_test_file.exists():
-        print(f"Dataset already extracted at {DATASET_DIR / 'vol_regime_H15_C60'}. Skipping download.")
-    else:
-        download_file(DATASET_URL, DATASET_TAR)
-        print("Extracting dataset tarball...")
-        DATASET_DIR.mkdir(parents=True, exist_ok=True)
-        with tarfile.open(DATASET_TAR, "r:gz") as tar:
-            tar.extractall(path=str(DATASET_DIR))
-        print("  Extraction complete.")
-        
-        # Cleanup tarball
-        if DATASET_TAR.exists():
-            os.remove(DATASET_TAR)
-            print("  Cleaned up temporary tarball.")
-
     print("\n=================================================================")
-    print("ALL ARTIFACTS DOWNLOADED AND VERIFIED.")
+    print("ALL ARTIFACTS SUCCESSFULLY DOWNLOADED AND EXTRACTED.")
     print("=================================================================")
 
 
