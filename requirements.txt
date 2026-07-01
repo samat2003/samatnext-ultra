@@ -1,2 +1,6 @@
 numpy==2.0.0
 Pandas==2.2.0
+Pytest==8.0.0
+Tqdm==4.66.0
+Torch==2.11.0
+Triton==3.5.0
