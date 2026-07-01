@@ -21,7 +21,7 @@ To maintain absolute quantitative and scientific honesty, please adhere to the f
 Do not misrepresent execution speeds:
 * **Token Step vs. Full Sequence**:
   * **13–14 µs** is the speed of a **single token step** (stateful CUDA Graph Triton recurrence). Not comparable to the full 128-token classification.
-  * **0.443 ms (443 µs)** is the **REMOVED full-pipeline classification latency** at batch=1. This includes text encoding, GPU upload, 128-token forward pass, argmax, and decode.
+  * **0.443 ms (443 µs)** is the **full-pipeline classification latency** at batch=1. This includes text encoding, GPU upload, 128-token forward pass, argmax, and decode.
 * **Throughput vs. Latency**:
   * **121,029 examples/sec** (batch=256) is amortised batched *inference* throughput. Do not describe it as update speed, training speed, or single-item latency.
   * **15.49M input tokens/sec** is the corresponding input-token throughput for batch=256 inference. Do not describe it as training throughput.

@@ -17,24 +17,24 @@ Fast32 is a 216,320-parameter stateful byte-level recurrent model designed for q
 
 ---
 
-## 3. Final Speed Metrics (RTX 5070 Ti Laptop GPU, REMOVED benchmark)
+## 3. Final Speed Metrics (RTX 5070 Ti Laptop GPU)
 
 | Benchmark | Batch | Latency | Throughput (Ex/sec) | Throughput (Tok/sec) |
 |---|---|---|---|---|
-| **REMOVED Final Classifier** | 1 | **0.443 ms / example** | 2,258 | 289,067 |
-| **REMOVED Final Classifier** | 16 | 0.485 ms / call | 32,976 | 4.22M |
-| **REMOVED Final Classifier** | 64 | 0.734 ms / call | 87,181 | 11.16M |
-| **REMOVED Final Classifier** | 256 | 2.115 ms / call · 8.26 µs amortized | **121,029** | **15.49M** |
+| **Final Classifier** | 1 | **0.443 ms / example** | 2,258 | 289,067 |
+| **Final Classifier** | 16 | 0.485 ms / call | 32,976 | 4.22M |
+| **Final Classifier** | 64 | 0.734 ms / call | 87,181 | 11.16M |
+| **Final Classifier** | 256 | 2.115 ms / call · 8.26 µs amortized | **121,029** | **15.49M** |
 | **Original-Stateful Token-Step** *(CUDA Graph)* | 1 | **13–14 µs / token** | — | — |
 | **Stateless Fused Ablation** *(ablation only)* | 1 | 6–8 µs / token | — | — |
 
-> **Note**: The REMOVED benchmark times a full-prompt forward pass over `seq_len=128` with prebuilt GPU tensors (no Python string overhead inside timing). The 13–14 µs token-step is a single Triton + CUDA Graph recurrence step. These are distinct measurements.
+> **Note**: The The benchmark times a full-prompt forward pass over `seq_len=128` with prebuilt GPU tensors (no Python string overhead inside timing). The 13–14 µs token-step is a single Triton + CUDA Graph recurrence step. These are distinct measurements.
 
 ---
 
 ## 4. Latency and Throughput Definitions
 
-* **0.443 ms / example (batch=1)**: Full-pipeline classification latency — text encoding, GPU upload, 128-token forward pass, argmax, decode — measured with prebuilt GPU tensors (REMOVED path).
+* **0.443 ms / example (batch=1)**: Full-pipeline classification latency — text encoding, GPU upload, 128-token forward pass, argmax, decode — measured with prebuilt GPU tensors.
 * **8.26 µs / example amortized (batch=256)**: Same pipeline, throughput-optimised batched path. Reports **121,029 examples/sec** and **15.49M input tokens/sec**.
 * **13–14 µs / token**: Single-token CUDA Graph stateful recurrence step latency. Not comparable to the 128-token classifier latency above.
 * **6–8 µs / token**: Stateless fused ablation (no hidden-state update). Speed reference only — not used in the final classifier.
@@ -49,9 +49,3 @@ Fast32 is a 216,320-parameter stateful byte-level recurrent model designed for q
 * **Do not claim to beat classical quant ML baselines**: LightGBM/XGBoost/logistic-regression comparisons have not been run and remain future work.
 
 ---
-
-## 6. Historical Experiment Documentation
-* [REMOVED: Volatility Regime Dataset Preparation](REMOVED/REMOVED_VOL_REGIME_DATASET_RESULTS.md)
-* [REMOVED: Volatility Regime UE1 Training](REMOVED/REMOVED_VOL_REGIME_UE1_RESULTS.md)
-* [REMOVED: Final Benchmark and Stability Audit](REMOVED/REMOVED_FINAL_BENCHMARK_AUDIT.md)
-* [REMOVED: Speed Benchmark Definition Audit](REMOVED/REMOVED_SPEED_BENCHMARK_DEFINITION_AUDIT.md)
