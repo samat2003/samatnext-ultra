@@ -35,7 +35,6 @@ For detailed setup instructions and options, see [REPRODUCE.md](REPRODUCE.md).
 ## Project Documentation
 * [FINAL_RESULTS.md](FINAL_RESULTS.md) — Summary tables of final accuracy and speed metrics.
 * [CLAIMS_AND_LIMITATIONS.md](CLAIMS_AND_LIMITATIONS.md) — Critical guidelines on baselines, signal limits, and what *not* to claim.
-* [walkthrough.md](walkthrough.md) — Step-by-step walkthrough of final audits.
 
 ---
 
