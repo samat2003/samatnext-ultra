@@ -16,7 +16,10 @@ Fast32 is a 216K-parameter original-stateful byte-level model. It failed noisy r
 
 ## Quick Start (WSL/Linux + CUDA)
 
-Verify setup and reproduce all final numbers:
+Verify setup and reproduce all final numbers. 
+
+> [!IMPORTANT]
+> Because this repository is private, clean-clone replication relies on the GitHub CLI (`gh`) to securely download checkpoint and dataset release assets. Ensure `gh` is installed and authenticated (`gh auth login`) on your system before running the commands.
 
 ```bash
 git clone https://github.com/samat2003/samatnext-ultra.git

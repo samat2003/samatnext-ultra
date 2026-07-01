@@ -367,7 +367,22 @@ def write_audit_report(results: dict, out_path: Path):
     a("   * Therefore, **7.65 µs / 13.75 µs** (single-token) and **449 µs** (128-token full pipeline) are completely different metrics.")
     a("")
 
-    # ── Component 1 ──────────────────────────────────────────────────────────
+    # ── Benchmark Definition Table ──────────────────────────────────────────
+    a("## Benchmark Definition & Wording Consensus")
+    a("")
+    a("To ensure absolute clarity before public releases, we define the four benchmark splits below:")
+    a("")
+    a("| Benchmark Name | Description | GPU Latency | Throughput | Use Case |")
+    a("|---|---|---|---|---|")
+    a("| **A. REMOVED Final Classifier** | prebuilt tensors, eager GPU forward pass | **2.115 ms** (batch-256 call) / **0.443 ms** (batch-1) | **121,029 ex/sec** (batch-256 amortized to **8.26 µs**) | Headline classification speed |")
+    a("| **B. REMOVED Slow Audit Pipeline** | Python string encoding/decoding loops inside timed path | **102.94 ms** (batch-256 call) / **8.29 ms** (batch-1) | **2,487 ex/sec** | Reference slow Python implementation |")
+    a("| **C. Triton + CUDA Graph Stateful Step** | seq_len=1, stateful recurrence token step | **12.93–13.82 µs** | — | Core autoregressive token generation |")
+    a("| **D. Triton + CUDA Graph Stateless Ablation** | seq_len=1, stateless precomposed token step | **6.66–7.37 µs** | — | Speed baseline speed ablation |")
+    a("")
+    a("---")
+    a("")
+
+    # ── 1. Historical Benchmarks Audit ──────────────────────────────────────
     a("## 1. Historical Benchmarks Audit")
     a("")
     a("### original_stateful_32 (13.75 µs)")
@@ -393,7 +408,7 @@ def write_audit_report(results: dict, out_path: Path):
     a("- **Reported Stats**: Mean = 7.65 µs, p99 = 8.48 µs")
     a("")
 
-    # ── Component 2 ──────────────────────────────────────────────────────────
+    # ── 2. REMOVED Benchmark Path Audit ──────────────────────────────────────
     a("## 2. REMOVED Benchmark Path Audit")
     a("")
     a("The REMOVED benchmark path in `scripts/benchmark_final_vol_regime.py` uses:")
@@ -406,12 +421,12 @@ def write_audit_report(results: dict, out_path: Path):
     a("- **Synchronization**: CUDA synchronization is performed before and after timing, which is correct, but includes eager dispatch overhead.")
     a("")
 
-    # ── Component 3 ──────────────────────────────────────────────────────────
+    # ── 3. Apples-to-Apples Latency Breakdown ──────────────────────────────────
     a("## 3. Apples-to-Apples Latency Breakdown")
     a("")
     a("Detailed timing breakdown for the trained volatility checkpoint (`best_val_accuracy.pt`):")
     a("")
-    a("### Split A: Pure Model Forward Only")
+    a("### Split A: Pure Model Forward Only (Eager GPU)")
     a("- Input tensor is pre-allocated on the GPU.")
     a("- No tokenization, no answer decoding, no accuracy bookkeeping.")
     a("- CUDA synchronization around model call only.")
@@ -431,8 +446,9 @@ def write_audit_report(results: dict, out_path: Path):
         a(f"| {bs} | 1 | {r['mean_latency_ms']:.3f} ms ({r['mean_latency_us']:.1f} µs) | {r['latency_us_per_token']:.2f} µs | {r['examples_per_sec']:,.0f} | {r['tokens_per_sec']:,.0f} |")
     a("")
 
-    a("### Split B: Full Classifier Pipeline")
+    a("### Split B: Slow Audit Pipeline (Python text loops inside timing)")
     a("- Includes: prompt text -> bytes -> padding to 128 -> GPU upload -> model forward -> argmax -> text decode.")
+    a("- **Note**: This includes sequential Python loops and CPU-GPU synchronization inside timing, adding substantial overhead.")
     a("")
     a("| Batch Size | Latency per Forward Call | Latency per Example | Examples/sec | Effective Tokens/sec |")
     a("|---|---|---|---|---|")
@@ -463,7 +479,7 @@ def write_audit_report(results: dict, out_path: Path):
     # ── Questions Answered ───────────────────────────────────────────────────
     a("## 4. Key Questions Answered")
     a("")
-    a("1. **Did the final trained checkpoint slow down the frozen architecture?**")
+    a("1. **Did the final trained checkpoint actually slow down the frozen architecture?**")
     a("   * **No.** When evaluated on the same hardware under the identical CUDA Graph Triton path, the trained checkpoint ")
     a(f"     runs in **{results['trained_stateful_repro']['mean_us']:.2f} µs**, which is statistically identical to the base ")
     a(f"     model's **{results['base_stateful_repro']['mean_us']:.2f} µs** latency.")
@@ -472,20 +488,19 @@ def write_audit_report(results: dict, out_path: Path):
     a("   * **No.** ")
     a("     * **7.65 µs**: Single-token step, precomposed stateless speed ablation (Triton + Graph, no hidden state).")
     a("     * **13.75 µs**: Single-token step, original stateful recurrence (Triton + Graph, updates `h[32,256]`).")
-    a("     * **449 µs**: 128-token full classification pipeline (Eager PyTorch + Python loops + string/bytes transfers).")
+    a("     * **443 µs / 449 µs**: 128-token full classification pipeline (Eager PyTorch + prebuilt GPU batch tensors).")
     a("")
     a("3. **What is the fastest valid latency for the final trained volatility checkpoint under the old benchmark path?**")
     a(f"   * **{results['trained_stateful_repro']['mean_us']:.2f} µs** per token for the original stateful architecture.")
     a(f"   * **{results['trained_stateless_repro']['mean_us']:.2f} µs** per token if running the stateless speed ablation path.")
     a("")
     a("4. **What is the honest full-pipeline classification latency?**")
-    a(f"   * **{results['pipeline'][1]['mean_latency_us']:.1f} µs** per example (batch size 1) or **{results['pipeline'][256]['latency_us_per_example']:.2f} µs** ")
-    a("     per example when batched at 256.")
+    a("   * **0.443 ms (443 µs)** per example (batch size 1) or **8.26 µs** per example (batch size 256 amortized) under the REMOVED benchmark configuration.")
     a("")
-    a("5. **What number should be used in the final README?**** What should NOT be used?**")
+    a("5. **What number should be used in the final README? What should NOT be used?**")
     a("   * **SHOULD USE**: ")
-    a(f"     * Single-token stateful inference: **13.75 µs** (RTX 5070 Ti Laptop GPU, Triton + Graph).")
-    a("     * Batched classification throughput: **119,307 examples/sec** (batch size 256).")
+    a("     * Single-token stateful inference: **13.75 µs** (RTX 5070 Ti Laptop GPU, Triton + Graph).")
+    a("     * Batched classification throughput: **121,029 examples/sec** (batch size 256).")
     a("   * **SHOULD NOT USE**: ")
     a("     * Do not claim **6–7 µs** for the full 128-token classification pipeline.")
     a("     * Do not claim **449 µs** means the model is slow; explain it is the full 128-token pipeline.")
