@@ -2,9 +2,6 @@
 
 Follow these steps to verify setup, reproduce the final test accuracy, and run speed benchmarks.
 
-> [!IMPORTANT]
-> Because this repository is private, clean-clone replication relies on the GitHub CLI (`gh`) to securely download checkpoint and dataset release assets. Ensure `gh` is installed and authenticated (`gh auth login`) on your system before running the commands.
-
 ---
 
 ## 1. Quick Start
