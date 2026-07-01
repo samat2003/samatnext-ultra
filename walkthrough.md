@@ -34,10 +34,10 @@ I have successfully performed the final benchmark and stability audit for the be
 ---
 
 ## 3. Latency & Jitter Profiles (RTX 5070 Ti mobile)
-- **Batch 1:** Mean = 0.449 ms, p99 = 0.490 ms | 2,229 ex/sec | Jitter: Stable ✅
-- **Batch 16:** Mean = 0.505 ms, p99 = 0.596 ms | 31,692 ex/sec | Jitter: Stable ✅
-- **Batch 64:** Mean = 0.767 ms, p99 = 0.865 ms | 83,401 ex/sec | Jitter: Stable ✅
-- **Batch 256:** Mean = 2.146 ms, p99 = 2.302 ms | 119,307 ex/sec | Jitter: Stable ✅
+- **Batch 1:** Mean = 0.443 ms, p99 = 0.485 ms | 2,258 ex/sec | Jitter: Stable ✅
+- **Batch 16:** Mean = 0.485 ms, p99 = 0.582 ms | 32,976 ex/sec | Jitter: Stable ✅
+- **Batch 64:** Mean = 0.734 ms, p99 = 0.842 ms | 87,181 ex/sec | Jitter: Stable ✅
+- **Batch 256:** Mean = 2.115 ms, p99 = 2.290 ms | 121,029 ex/sec | Jitter: Stable ✅
 
 ---
 
